@@ -1,0 +1,129 @@
+{
+  "id": "7g3N5XnjY4DEr8Fy",
+  "name": "Jonas Signup",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Zugang zu Jonas anfragen",
+        "formDescription": "Trag dich ein, du bekommst direkt den Telegram-Link",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Name"
+            },
+            {
+              "fieldLabel": "E-Mail",
+              "fieldType": "email"
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "9eb0541a-335b-4285-9f05-6968ffda1919",
+      "name": "Zugang zu Jonas anfragen"
+    },
+    {
+      "parameters": {
+        "jsCode": "function slugify(s) {\n  return String(s).toLowerCase()\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 40);\n}\nfunction randomToken(len) {\n  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';\n  let out = '';\n  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];\n  return out;\n}\nconst name = $json['Name'] || '';\nconst email = $json['E-Mail'] || '';\nreturn [{ json: {\n  tenantId: `${slugify(name) || 'kunde'}-${randomToken(4).toLowerCase()}`,\n  signupToken: randomToken(24),\n  email\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "23eae956-f91f-43f9-8e13-bc925d8b3cdb",
+      "name": "Signup-Daten vorbereiten"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tenants (tenant_id, email, status, signup_token)\nVALUES (\n  '{{ $json.tenantId.replace(/'/g, \"''\") }}',\n  '{{ $json.email.replace(/'/g, \"''\") }}',\n  'pending',\n  '{{ $json.signupToken.replace(/'/g, \"''\") }}'\n)\nRETURNING tenant_id, signup_token;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "51510b1c-5ac4-45c8-a871-efcc97bf0052",
+      "name": "Tenant anlegen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "redirect",
+        "redirectUrl": "=https://t.me/YOUR_BOT_USERNAME?start={{ $json.signup_token }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        624,
+        0
+      ],
+      "id": "df162354-0d61-4dc0-9152-c6771f10d28d",
+      "name": "Form"
+    }
+  ],
+  "connections": {
+    "Zugang zu Jonas anfragen": {
+      "main": [
+        [
+          {
+            "node": "Signup-Daten vorbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signup-Daten vorbereiten": {
+      "main": [
+        [
+          {
+            "node": "Tenant anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant anlegen": {
+      "main": [
+        [
+          {
+            "node": "Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

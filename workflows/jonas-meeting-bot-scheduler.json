@@ -1,0 +1,525 @@
+{
+  "id": "DjnwQuighhyQKEab",
+  "name": "Jonas Meeting Bot Scheduler",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -3216,
+        1392
+      ],
+      "id": "9b3a4232-6be6-4617-8c48-f9b7213a4e94",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id\nFROM tenants t\nWHERE t.status = 'active'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2992,
+        1392
+      ],
+      "id": "6129bdba-f419-4a4b-85a4-c8a749763a86",
+      "name": "Aktive Tenants laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -2768,
+        1392
+      ],
+      "id": "7e36e12f-e733-444f-bbfa-9c338f9b9a7e",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Aktive Tenants laden').item.json.tenant_id }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -2544,
+        1312
+      ],
+      "id": "48cd48d3-26a1-4d3c-90c4-3a11b67c6e0f",
+      "name": "Graph Token (Meeting Scan)",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "49638979-6c39-41c9-858d-154b9f7f3080",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2320,
+        1312
+      ],
+      "id": "334634ca-9612-43a1-9458-454d156743ed",
+      "name": "Meeting-Scan Token OK?"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + $now.toISO() + \"&endDateTime=\" + $now.plus({minutes:12}).toISO() + \"&$select=id,subject,start,end,onlineMeeting,location,body&$top=25\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Graph Token (Meeting Scan)').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2096,
+        1248
+      ],
+      "id": "6c0bf569-ed0b-4a5e-8831-4d6c18de0b94",
+      "name": "Kalenderdaten abrufen (Meeting Scan)",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tenantId = $('Aktive Tenants laden').item.json.tenant_id;\nconst chatId = $('Aktive Tenants laden').item.json.telegram_chat_id;\nconst events = $input.first().json.value || [];\nif (events.length === 0) {\n  return [{ json: { tenant_id: tenantId, telegram_chat_id: chatId, no_events: true } }];\n}\nreturn events.map(e => ({ json: { ...e, tenant_id: tenantId, telegram_chat_id: chatId } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        1248
+      ],
+      "id": "5842172a-3544-4469-ad06-5622448eb64d",
+      "name": "Events entpacken (Meeting Scan)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "function extractLink(ev) {\n  if (ev.onlineMeeting && ev.onlineMeeting.joinUrl) return ev.onlineMeeting.joinUrl;\n  const text = ((ev.body && ev.body.content) || '') + ' ' + ((ev.location && ev.location.displayName) || '');\n  const m = text.match(/https:\\/\\/(?:[\\w.-]*zoom\\.us\\/j\\/[^\\s\"'<>]+|teams\\.microsoft\\.com\\/l\\/meetup-join\\/[^\\s\"'<>]+|meet\\.google\\.com\\/[a-z-]+)/i);\n  return m ? m[0] : null;\n}\nconst items = $input.all().map(i => i.json);\nconst withLinks = items\n  .filter(ev => !ev.no_events)\n  .map(ev => ({ ...ev, meeting_url: extractLink(ev) }))\n  .filter(ev => ev.meeting_url);\n\nif (withLinks.length === 0) {\n  const first = items[0] || {};\n  return [{ json: { tenant_id: first.tenant_id, telegram_chat_id: first.telegram_chat_id, meeting_url: null } }];\n}\nreturn withLinks.map(ev => ({ json: ev }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        1248
+      ],
+      "id": "8c32c1b9-4da5-4b52-83f5-16d6a9cc78c3",
+      "name": "Meeting-Link extrahieren",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6837bdb1-4a55-465f-8563-19a341d88524",
+              "leftValue": "={{ $json.meeting_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1424,
+        1248
+      ],
+      "id": "13c8bc69-eb37-4bcf-8c11-bfa462037b2c",
+      "name": "Meeting gefunden?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_meeting_bots (tenant_id, event_id, event_title, meeting_url, telegram_chat_id, status)\nVALUES (\n  '{{ $json.tenant_id.replace(/'/g, \"''\") }}',\n  '{{ $json.id.replace(/'/g, \"''\") }}',\n  '{{ ($json.subject || \"\").replace(/'/g, \"''\") }}',\n  '{{ $json.meeting_url.replace(/'/g, \"''\") }}',\n  '{{ $json.telegram_chat_id.replace(/'/g, \"''\") }}',\n  'pending'\n)\nON CONFLICT (tenant_id, event_id) DO NOTHING\nRETURNING tenant_id, event_id, event_title, meeting_url, telegram_chat_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1200,
+        1168
+      ],
+      "id": "a17e9692-29e1-44fb-95a9-6c2803b0af88",
+      "name": "Bot reservieren",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1182a431-de34-487b-b741-5a1f9cddbd35",
+              "leftValue": "={{ $json.event_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -976,
+        1168
+      ],
+      "id": "f2bab187-ebef-4ae0-9a7f-8e279363bac6",
+      "name": "Neu reserviert?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://\" + $env.RECALL_API_REGION + \".recall.ai/api/v1/bot\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Token \" + $env.RECALL_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  meeting_url: $json.meeting_url,\n  bot_name: 'Jonas Notiz-Bot',\n  metadata: { tenant_id: $json.tenant_id, event_id: $json.event_id },\n  recording_config: { transcript: { provider: { recallai_streaming: {} } } }\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -752,
+        1104
+      ],
+      "id": "7f7c31dc-7dd2-41b6-9f36-4e31f69552a3",
+      "name": "Recall Bot erstellen",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_meeting_bots\nSET recall_bot_id = '{{ $json.id.replace(/'/g, \"''\") }}', status = 'scheduled', updated_at = NOW()\nWHERE tenant_id = '{{ $('Bot reservieren').first().json.tenant_id.replace(/'/g, \"''\") }}'\n  AND event_id = '{{ $('Bot reservieren').first().json.event_id.replace(/'/g, \"''\") }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -528,
+        1024
+      ],
+      "id": "59e2e13a-83da-408e-ad88-8ffc9156e6fd",
+      "name": "Bot-ID speichern",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { done: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        1360
+      ],
+      "id": "a7a07920-ff35-4b99-a448-2b72a6445934",
+      "name": "Tenant-Iteration Abschluss"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Graph Token (Meeting Scan)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (Meeting Scan)": {
+      "main": [
+        [
+          {
+            "node": "Meeting-Scan Token OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting-Scan Token OK?": {
+      "main": [
+        [
+          {
+            "node": "Kalenderdaten abrufen (Meeting Scan)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant-Iteration Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalenderdaten abrufen (Meeting Scan)": {
+      "main": [
+        [
+          {
+            "node": "Events entpacken (Meeting Scan)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events entpacken (Meeting Scan)": {
+      "main": [
+        [
+          {
+            "node": "Meeting-Link extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting-Link extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Meeting gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Bot reservieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant-Iteration Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot reservieren": {
+      "main": [
+        [
+          {
+            "node": "Neu reserviert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neu reserviert?": {
+      "main": [
+        [
+          {
+            "node": "Recall Bot erstellen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant-Iteration Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recall Bot erstellen": {
+      "main": [
+        [
+          {
+            "node": "Bot-ID speichern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant-Iteration Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot-ID speichern": {
+      "main": [
+        [
+          {
+            "node": "Tenant-Iteration Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant-Iteration Abschluss": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

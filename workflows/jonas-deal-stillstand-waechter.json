@@ -1,0 +1,715 @@
+{
+  "id": "7bLdgMWCIzVB9sl5",
+  "name": "Jonas Deal-Stillstand-Waechter",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "fffb8972-8ffe-46d2-bf23-555ca3c0b376",
+      "name": "Taeglich 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id,\n       pgp_sym_decrypt(tc.access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS hubspot_token\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id AND tc.provider = 'hubspot'\nWHERE t.status = 'active' AND t.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "id": "f531ceb8-1e71-40a6-b4c1-f608693eb5d8",
+      "name": "Verbundene Tenants laden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -432,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "3a8625ce-b8eb-45f1-8ed9-9f6f7cce698a",
+      "name": "Tenant Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -208,
+        464
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "64d9b03a-b364-406c-a933-65c8a0341081",
+      "name": "Alle Tenants fertig",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        16,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tenant = $json;\nconst cutoffMillis = Date.now() - 14 * 24 * 3600 * 1000;\nreturn [{ json: { ...tenant, cutoffMillis } }];"
+      },
+      "id": "45dc4e10-2a8c-41c0-881a-dfc49de9c51a",
+      "name": "Cutoff berechnen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.hubspotToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [\n    { propertyName: 'dealstage', operator: 'NOT_IN', values: ['closedwon', 'closedlost'] },\n    { propertyName: 'hs_lastmodifieddate', operator: 'LT', value: String($json.cutoffMillis) }\n  ] }],\n  properties: ['dealname', 'dealstage', 'hs_lastmodifieddate'],\n  limit: 100\n}) }}",
+        "options": {}
+      },
+      "id": "32014dfa-0476-4395-a13b-3440b71c0e5e",
+      "name": "HubSpot Deals suchen (Stillstand)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        192
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT deal_id FROM jonas_deal_stillstand_sent\nWHERE tenant_id = '{{ $('Tenant Loop').first().json.tenant_id.replace(/'/g, \"''\") }}'\n  AND sent_at > NOW() - INTERVAL '7 days';",
+        "options": {}
+      },
+      "id": "af676b89-fce2-4ba5-841f-a40bd89ddbdb",
+      "name": "Bereits gemeldet laden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        464,
+        192
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const httpResult = $('HubSpot Deals suchen (Stillstand)').first().json;\nconst results = httpResult.results || [];\nconst alreadySent = new Set($('Bereits gemeldet laden').all().map(i => i.json.deal_id));\nconst tenant = $('Tenant Loop').first().json;\nconst now = Date.now();\n\nconst fresh = results.filter(d => d.id && !alreadySent.has(d.id));\n\nif (fresh.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\nreturn fresh.map(d => {\n  const lastModified = d.properties?.hs_lastmodifieddate ? new Date(d.properties.hs_lastmodifieddate) : null;\n  const daysStale = lastModified ? Math.floor((now - lastModified.getTime()) / (24 * 3600 * 1000)) : null;\n  return {\n    json: {\n      skip: false,\n      dealId: d.id,\n      dealName: d.properties?.dealname || 'Unbenannt',\n      dealStage: d.properties?.dealstage || '',\n      daysStale,\n      tenantId: tenant.tenant_id,\n      telegramChatId: tenant.telegram_chat_id,\n      hubspotToken: tenant.hubspot_token\n    }\n  };\n});"
+      },
+      "id": "0b81e91b-dcf9-4f65-a8c4-d73abc079994",
+      "name": "Stale Deals aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "42dc70b5-56bb-4a1a-90df-5e75f73ffc75",
+              "leftValue": "={{ $json.skip === true ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "59715028-0b2e-4dd7-90bd-4fec60e574c0",
+      "name": "Neue Deals? (Stillstand)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        912,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://api.hubapi.com/crm/v3/objects/deals/\" + $json.dealId + \"?associations=contacts\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.hubspotToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bb6ffccb-0d28-4c7d-9a6e-91b840892ac0",
+      "name": "Kontakt-ID laden (Stillstand)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1136,
+        192
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $('Stale Deals aufbereiten').item.json;\nconst assoc = $json.associations?.contacts?.results || [];\nconst contactId = assoc.length ? assoc[0].id : null;\nreturn { json: { ...orig, contactId } };"
+      },
+      "id": "e6281df0-790e-49c4-8cf0-5a5929418d64",
+      "name": "Kontakt-ID extrahieren (Stillstand)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5995ed66-655f-4b31-989b-075e837c0668",
+              "leftValue": "={{ $json.contactId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cae96f0c-3e90-43ce-a0f0-d86f755fb783",
+      "name": "Kontakt-ID gefunden? (Stillstand)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1584,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://api.hubapi.com/crm/v3/objects/contacts/\" + $json.contactId + \"?properties=email,firstname,lastname\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.hubspotToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "76072b07-aa00-4b5c-bde6-0dd381b5bca8",
+      "name": "Kontakt-Email laden (Stillstand)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1808,
+        128
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $('Kontakt-ID extrahieren (Stillstand)').item.json;\nconst contact = $json.properties || {};\nconst email = contact.email || null;\nconst contactName = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || null;\nreturn { json: { ...orig, contactEmail: email, contactName } };"
+      },
+      "id": "cb0981d9-a65e-49ba-93be-11331046cb10",
+      "name": "Kontakt-Email zusammenfuehren (Stillstand)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $json;\nreturn { json: { ...orig, contactEmail: null, contactName: null } };"
+      },
+      "id": "5866d19b-6ca1-43e0-b51f-963af0227707",
+      "name": "Kein Kontakt (Stillstand)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ \"Du bist ein erfahrener Vertriebsassistent fuer einen Immobilienmakler. \" +\n\"Ein CRM-Deal haengt seit laengerem ohne Fortschritt fest. Schreibe EIN kurzes, freundliches Follow-up und EINE knappe interne CRM-Notiz dazu. \" +\n\"Antworte AUSSCHLIESSLICH mit einem gueltigen JSON-Objekt, keine Code-Fences, keine Erklaerung. \" +\n\"Format (exakt diese Keys): \" + '{\"draft\":\"Follow-up-Mailtext auf Deutsch, kurz und konkret, mit Anrede und Grussformel\",\"note_text\":\"1 Satz interne Notiz fuers CRM\"}' }}",
+            "userMessage": "={{ \"Deal: \" + $json.dealName + \"\\nAktuelle Stage: \" + $json.dealStage + \"\\n\" +\n\"Haengt seit \" + ($json.daysStale ?? 'unbekannt') + \" Tagen ohne Bewegung fest.\\n\" +\n\"Ansprechpartner: \" + ($json.contactName || 'unbekannt') + \"\\n\" +\n\"Bitte kurzes Follow-up + interne Notiz vorschlagen.\" }}",
+            "maxTokens": "300"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "b15ebf86-8e57-449a-b1e3-ccf8645640c7",
+      "name": "Draft generieren (Stillstand)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2256,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $('Kontakt-Email zusammenfuehren (Stillstand)').item.json;\nconst raw = $json.text || '';\nlet draft = 'Kurzes Follow-up zu \"' + orig.dealName + '\" waere faellig.';\nlet noteText = 'Deal haengt seit ' + (orig.daysStale ?? '?') + ' Tagen ohne Bewegung.';\ntry {\n  const clean = raw.replace(/```json|```/g, '').trim();\n  const start = clean.indexOf('{');\n  const end = clean.lastIndexOf('}');\n  if (start !== -1 && end !== -1) {\n    const parsed = JSON.parse(clean.slice(start, end + 1));\n    if (parsed.draft) draft = parsed.draft;\n    if (parsed.note_text) noteText = parsed.note_text;\n  }\n} catch (e) { /* defensiv: Fallback-Texte oben bleiben stehen */ }\nreturn { json: { ...orig, draft, noteText } };"
+      },
+      "id": "a644285c-f649-42c3-83c7-9c04d548b087",
+      "name": "Draft parsen (Stillstand)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_pending_dealfollowup (tenant_id, deal_id, deal_name, contact_email, draft_text, note_text, expires_at)\nVALUES (\n  '{{ $json.tenantId.replace(/'/g, \"''\") }}',\n  '{{ $json.dealId.replace(/'/g, \"''\") }}',\n  '{{ $json.dealName.replace(/'/g, \"''\") }}',\n  {{ $json.contactEmail ? \"'\" + $json.contactEmail.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  '{{ $json.draft.replace(/'/g, \"''\") }}',\n  '{{ $json.noteText.replace(/'/g, \"''\") }}',\n  NOW() + INTERVAL '3 days'\n)\nRETURNING id;",
+        "options": {}
+      },
+      "id": "e02f3f4c-c7c7-4c71-8e19-109cf7765c12",
+      "name": "Pending Dealfollowup speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2704,
+        192
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Draft parsen (Stillstand)').item.json.telegramChatId }}",
+        "text": "={{ \"Deal \\\"\" + $('Draft parsen (Stillstand)').item.json.dealName + \"\\\" haengt seit \" + \n($('Draft parsen (Stillstand)').item.json.daysStale ?? '?') + \" Tagen in Stufe \\\"\" + \n$('Draft parsen (Stillstand)').item.json.dealStage + \"\\\" ohne Bewegung.\\n\\nVorschlag:\\n\" + \n$('Draft parsen (Stillstand)').item.json.draft + \n\"\\n\\nMail-Entwurf + HubSpot-Notiz anlegen? (ja/nein)\" }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "0a59e22f-7b38-4cac-b1e0-ff9824ff7665",
+      "name": "Vorschlag senden (Stillstand)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2928,
+        192
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_deal_stillstand_sent (tenant_id, deal_id)\nVALUES ('{{ $('Draft parsen (Stillstand)').item.json.tenantId.replace(/'/g, \"''\") }}',\n        '{{ $('Draft parsen (Stillstand)').item.json.dealId.replace(/'/g, \"''\") }}')\nON CONFLICT (tenant_id, deal_id) DO UPDATE SET sent_at = NOW();",
+        "options": {}
+      },
+      "id": "48f5a8e6-bdb8-46e5-bc22-842fb0211bbe",
+      "name": "Gemeldet markieren (Stillstand)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3152,
+        272
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Taeglich 09:00": {
+      "main": [
+        [
+          {
+            "node": "Verbundene Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verbundene Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant Loop": {
+      "main": [
+        [
+          {
+            "node": "Alle Tenants fertig",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cutoff berechnen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cutoff berechnen": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Deals suchen (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Deals suchen (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Bereits gemeldet laden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bereits gemeldet laden": {
+      "main": [
+        [
+          {
+            "node": "Stale Deals aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stale Deals aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Neue Deals? (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neue Deals? (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kontakt-ID laden (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-ID laden (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Kontakt-ID extrahieren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kontakt-ID extrahieren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-ID extrahieren (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Kontakt-ID gefunden? (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-ID gefunden? (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Kontakt-Email laden (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Kontakt (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-Email laden (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Kontakt-Email zusammenfuehren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Kontakt (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-Email zusammenfuehren (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Draft generieren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kein Kontakt (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Draft generieren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft generieren (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Draft parsen (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft parsen (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Pending Dealfollowup speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pending Dealfollowup speichern": {
+      "main": [
+        [
+          {
+            "node": "Vorschlag senden (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vorschlag senden (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Gemeldet markieren (Stillstand)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemeldet markieren (Stillstand)": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

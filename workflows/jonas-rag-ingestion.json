@@ -1,0 +1,273 @@
+{
+  "id": "2wY39Fg7dO332u4T",
+  "name": "Jonas RAG Ingestion",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "65dd8564-a817-47a5-a39b-ea5ef5c76de3",
+      "name": "Manueller Start (RAG Ingestion)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1328,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ae22d142-981c-4ab3-9660-4f58ab2f0f87",
+              "name": "sourceName",
+              "type": "string",
+              "value": "TODO-quelle-benennen"
+            },
+            {
+              "id": "9d23ec7f-7cfc-4790-86ce-04b4117cadb7",
+              "name": "tenantId",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "670da4c7-1312-496a-a75f-e6c3d97a8090",
+              "name": "fullText",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "153e365a-5668-41de-93b5-e8f18ef28091",
+      "name": "Quelltext (Platzhalter - vor Lauf befuellen)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1104,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\nconst text = (input.fullText || '').trim();\nif (!text) {\n  throw new Error('Kein Quelltext gesetzt - \"Quelltext (Platzhalter)\"-Node vor dem Lauf befuellen (fullText ist leer).');\n}\nif (!input.sourceName || input.sourceName === 'TODO-quelle-benennen') {\n  throw new Error('sourceName nicht gesetzt - bitte im \"Quelltext\"-Node einen echten Namen vergeben.');\n}\n\nconst CHUNK_SIZE = 800;\nconst paragraphs = text.split(/\\n\\s*\\n/).map(p => p.trim()).filter(Boolean);\nconst chunks = [];\nlet current = '';\nfor (const p of paragraphs) {\n  if ((current + '\\n\\n' + p).length > CHUNK_SIZE && current) {\n    chunks.push(current.trim());\n    current = p;\n  } else {\n    current = current ? current + '\\n\\n' + p : p;\n  }\n}\nif (current.trim()) chunks.push(current.trim());\n\nreturn chunks.map((c, i) => ({ json: {\n  sourceName: input.sourceName,\n  tenantId: input.tenantId || null,\n  chunkIndex: i,\n  content: c\n} }));"
+      },
+      "id": "24a314d9-352f-4830-89af-3cc20303083a",
+      "name": "In Chunks teilen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'mistral-embed', input: [$json.content] }) }}",
+        "options": {}
+      },
+      "id": "d4c9701e-4d4b-41f9-acd3-dd72230aef18",
+      "name": "Mistral Embedding erstellen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -656,
+        96
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Mistral API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $('In Chunks teilen').item.json;\nconst vec = $json.data?.[0]?.embedding || null;\nif (!vec) {\n  return { json: { ...orig, embeddingLiteral: null, embedError: $json.error?.message || 'keine Embedding-Daten in Antwort' } };\n}\nconst embeddingLiteral = '[' + vec.join(',') + ']';\nreturn { json: { ...orig, embeddingLiteral } };"
+      },
+      "id": "15b0ac89-0743-4f23-94f5-2d86cd6f75e6",
+      "name": "Embedding extrahieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c2949966-c7de-4471-906d-d1bbd8c4c658",
+              "leftValue": "={{ $json.embeddingLiteral }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bb15281c-cd3d-4908-8de5-710d67b105ac",
+      "name": "Embedding OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -208,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_knowledge_chunks (tenant_id, source_name, chunk_index, content, embedding)\nVALUES (\n  {{ $json.tenantId ? \"'\" + $json.tenantId.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  '{{ $json.sourceName.replace(/'/g, \"''\") }}',\n  {{ $json.chunkIndex }},\n  '{{ $json.content.replace(/'/g, \"''\") }}',\n  '{{ $json.embeddingLiteral }}'::vector\n)\nON CONFLICT (source_name, chunk_index) DO UPDATE SET\n  content = EXCLUDED.content,\n  embedding = EXCLUDED.embedding,\n  tenant_id = EXCLUDED.tenant_id;",
+        "options": {}
+      },
+      "id": "bc709267-1c26-4e17-83cc-49cfca8c9235",
+      "name": "Chunk speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        16,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "b7ec2caa-c347-4875-aaa0-5acecc2c0154",
+      "name": "Chunk uebersprungen (Embedding-Fehler)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        16,
+        192
+      ]
+    }
+  ],
+  "connections": {
+    "Manueller Start (RAG Ingestion)": {
+      "main": [
+        [
+          {
+            "node": "Quelltext (Platzhalter - vor Lauf befuellen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quelltext (Platzhalter - vor Lauf befuellen)": {
+      "main": [
+        [
+          {
+            "node": "In Chunks teilen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In Chunks teilen": {
+      "main": [
+        [
+          {
+            "node": "Mistral Embedding erstellen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Embedding erstellen": {
+      "main": [
+        [
+          {
+            "node": "Embedding extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Embedding extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Embedding OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding OK?": {
+      "main": [
+        [
+          {
+            "node": "Chunk speichern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Chunk uebersprungen (Embedding-Fehler)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,389 @@
+{
+  "id": "JIy9hbDMSKVGQbDD",
+  "name": "Jonas Muster-Mining Report",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "44cbb27a-ab75-4760-834e-462ac48549f5",
+      "name": "Monatlich 08:00 (Muster-Mining)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id,\n       pgp_sym_decrypt(tc.access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS hubspot_token\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id AND tc.provider = 'hubspot'\nWHERE t.status = 'active' AND t.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "id": "bf52f9f7-e9c7-42e8-aedb-3139c1ab1b9d",
+      "name": "Verbundene Tenants laden (Muster-Mining)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -432,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "f4794ac5-8a4b-4ce5-a8cc-667ab508e21a",
+      "name": "Tenant Loop (Muster-Mining)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -208,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "e8675286-ba8b-4238-9628-816574589fec",
+      "name": "Alle Tenants fertig (Muster-Mining)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        16,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.hubspot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [\n    { propertyName: 'dealstage', operator: 'EQ', value: 'closedwon' },\n    { propertyName: 'closedate', operator: 'GTE', value: String(Date.now() - 90*24*3600*1000) }\n  ] }],\n  properties: ['dealname', 'amount', 'createdate', 'closedate'],\n  limit: 100\n}) }}",
+        "options": {}
+      },
+      "id": "ee5a6ff7-83b1-42fd-bba2-8d10afa50390",
+      "name": "HubSpot Closed-Won laden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        16,
+        192
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const httpResult = $json;\nconst deals = httpResult.results || [];\nconst tenant = $('Tenant Loop (Muster-Mining)').first().json;\n\nconst parsed = deals.map(d => {\n  const created = d.properties?.createdate ? new Date(d.properties.createdate).getTime() : null;\n  const closed = d.properties?.closedate ? new Date(d.properties.closedate).getTime() : null;\n  const cycleDays = (created && closed) ? Math.round((closed - created) / (24*3600*1000)) : null;\n  const amount = d.properties?.amount ? parseFloat(d.properties.amount) : null;\n  return {\n    name: d.properties?.dealname || 'Unbenannt',\n    amount,\n    cycleDays\n  };\n}).filter(d => d.cycleDays !== null);\n\nif (parsed.length < 3) {\n  return [{ json: { enoughData: false, dealCount: parsed.length } }];\n}\n\nconst cycleDaysList = parsed.map(d => d.cycleDays).sort((a,b) => a-b);\nconst avgCycle = Math.round(cycleDaysList.reduce((a,b) => a+b, 0) / cycleDaysList.length);\nconst medianCycle = cycleDaysList[Math.floor(cycleDaysList.length / 2)];\nconst amounts = parsed.filter(d => d.amount !== null).map(d => d.amount);\nconst avgAmount = amounts.length ? Math.round(amounts.reduce((a,b) => a+b, 0) / amounts.length) : null;\n\nconst topByAmount = parsed.slice().sort((a,b) => (b.amount||0) - (a.amount||0)).slice(0, 10);\nconst dealListText = topByAmount.map(d => `- ${d.name}: ${d.amount ?? '?'}€, ${d.cycleDays} Tage bis Abschluss`).join('\\n');\n\nreturn [{ json: {\n  enoughData: true,\n  dealCount: parsed.length,\n  avgCycle,\n  medianCycle,\n  avgAmount,\n  dealListText,\n  tenantId: tenant.tenant_id,\n  telegramChatId: tenant.telegram_chat_id\n} }];"
+      },
+      "id": "40d7dd84-b53e-495e-94ef-0c68572d494d",
+      "name": "Muster aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "54e96a8b-4f50-4a83-b2f9-15bd6c1e6832",
+              "leftValue": "={{ $json.enoughData }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4ae56f21-95e4-4d3c-a1c1-23d46fa06cb6",
+      "name": "Genug Daten? (Muster-Mining)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        464,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ \"Du analysierst gewonnene Immobiliendeals der letzten 90 Tage eines Maklers auf wiederkehrende Muster. \" +\n\"Du bekommst Kennzahlen und eine Liste der groessten Deals mit Durchlaufzeit. \" +\n\"Nenne 2-4 knappe, KONKRETE Beobachtungen (z.B. ungewoehnlich schnelle/langsame Faelle, Ausreisser, erkennbare Gemeinsamkeiten im Namen/Typ). \" +\n\"Erfinde NICHTS, wenn die Datenlage zu duenn ist, sag das stattdessen ehrlich. \" +\n\"Antworte AUSSCHLIESSLICH mit dem Fliesstext auf Deutsch, keine Ueberschrift, keine Auflistung mit Bulletpoints, kein JSON, keine Code-Fences.\" }}",
+            "userMessage": "={{ \"Anzahl gewonnener Deals (90 Tage): \" + $json.dealCount + \"\\n\" +\n\"Durchschnittliche Durchlaufzeit: \" + $json.avgCycle + \" Tage (Median: \" + $json.medianCycle + \")\\n\" +\n\"Durchschnittlicher Betrag: \" + ($json.avgAmount ?? 'unbekannt') + \"€\\n\\n\" +\n\"Groesste Deals:\\n\" + $json.dealListText }}",
+            "maxTokens": "350"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "4e4ad960-1261-436e-bdf0-32332e3cb809",
+      "name": "Muster analysieren",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        688,
+        336
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const orig = $('Muster aufbereiten').item.json;\nlet analysis = ($json.text || '').trim().replace(/```/g, '').trim();\nif (!analysis) analysis = 'Keine auffaelligen Muster erkannt.';\nreturn { json: { ...orig, analysis } };"
+      },
+      "id": "5cffdd8e-3441-481d-b477-40ba0b7788dd",
+      "name": "Analyse parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Analyse parsen').item.json.telegramChatId }}",
+        "text": "={{ \"📊 Muster-Report – letzte 90 Tage\\n\" +\n$('Analyse parsen').item.json.dealCount + \" gewonnene Deals, Ø \" + $('Analyse parsen').item.json.avgCycle + \" Tage Durchlaufzeit, Ø \" + ($('Analyse parsen').item.json.avgAmount ?? '?') + \"€\\n\\n\" +\n$('Analyse parsen').item.json.analysis }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "a9deeffe-e25b-4a5b-9b8b-110037779f79",
+      "name": "Muster-Report senden",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1136,
+        416
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Monatlich 08:00 (Muster-Mining)": {
+      "main": [
+        [
+          {
+            "node": "Verbundene Tenants laden (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verbundene Tenants laden (Muster-Mining)": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant Loop (Muster-Mining)": {
+      "main": [
+        [
+          {
+            "node": "Alle Tenants fertig (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Closed-Won laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Closed-Won laden": {
+      "main": [
+        [
+          {
+            "node": "Muster aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant Loop (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Muster aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Genug Daten? (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Genug Daten? (Muster-Mining)": {
+      "main": [
+        [
+          {
+            "node": "Muster analysieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant Loop (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Muster analysieren": {
+      "main": [
+        [
+          {
+            "node": "Analyse parsen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant Loop (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyse parsen": {
+      "main": [
+        [
+          {
+            "node": "Muster-Report senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Muster-Report senden": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop (Muster-Mining)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

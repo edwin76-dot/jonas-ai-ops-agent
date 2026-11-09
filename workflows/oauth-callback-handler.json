@@ -1,0 +1,273 @@
+{
+  "id": "zjnG61gZPb3NXGKg",
+  "name": "OAuth Callback Handler",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "oauth-callback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -64
+      ],
+      "id": "2c426ddc-830a-4213-90ae-7e58009d1a5f",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const code = $json.query?.code;\nconst state = $json.query?.state; // state = tenant_id\nconst error = $json.query?.error;\n\nif (error) {\n  return [{ json: { success: false, error: error, errorDescription: $json.query?.error_description || '' } }];\n}\n\nif (!code || !state) {\n  return [{ json: { success: false, error: 'missing_params', errorDescription: 'Code oder State fehlt in der Callback-URL' } }];\n}\n\nreturn [{ json: { success: true, code, tenantId: state } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -64
+      ],
+      "id": "4f4b4964-13ef-48af-9b06-ef3185154770",
+      "name": "Code und State extrahieren"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6181df8c-390a-407e-a570-f9397bc1cede",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        -64
+      ],
+      "id": "2efc1f59-df46-4b3e-91c7-ac7075037b1a",
+      "name": "Erfolgreich?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tenant_credentials (tenant_id, provider, access_token, refresh_token, expires_at)\nVALUES (\n  '{{ $('Code und State extrahieren').first().json.tenantId.replace(/'/g, \"''\") }}',\n  'outlook',\n  pgp_sym_encrypt('{{ $json.access_token.replace(/'/g, \"''\") }}', '{{ $env.TENANT_TOKEN_SECRET }}'),\n  pgp_sym_encrypt('{{ $json.refresh_token.replace(/'/g, \"''\") }}', '{{ $env.TENANT_TOKEN_SECRET }}'),\n  NOW() + INTERVAL '{{ $json.expires_in }} seconds'\n)\nON CONFLICT (tenant_id, provider) DO UPDATE SET\n  access_token = EXCLUDED.access_token,\n  refresh_token = EXCLUDED.refresh_token,\n  expires_at = EXCLUDED.expires_at,\n  updated_at = NOW();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        -144
+      ],
+      "id": "924fa554-3fbe-4e15-8918-562d209d0622",
+      "name": "Tenant Credentials speichern",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Verbindung erfolgreich! Du kannst dieses Fenster jetzt schließen und zu Telegram zurückkehren.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1120,
+        -192
+      ],
+      "id": "8dfa7408-568b-49e1-8f7c-bc72cfb7b287",
+      "name": "Success Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $json.error || $json.error?.message || 'Unbekannter Fehler';\nconst description = $json.errorDescription || $json.error?.description || '';\nreturn [{ json: { message: `Verbindung fehlgeschlagen: ${error}. ${description}` } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        32
+      ],
+      "id": "09a6b86a-eaae-4c6e-97b0-22687e4eb506",
+      "name": "Fehler-Nachricht bauen"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.message }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1344,
+        32
+      ],
+      "id": "aa7e700d-2160-4e50-adf9-717d3cc2f626",
+      "name": "Error Response"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $env.AZURE_CLIENT_ID }}"
+            },
+            {
+              "name": "client_secret",
+              "value": "={{ $env.AZURE_CLIENT_SECRET }}"
+            },
+            {
+              "name": "code",
+              "value": "={{ $json.code }}"
+            },
+            {
+              "name": "redirect_uri",
+              "value": "https://n8n.example.com/webhook/oauth-callback"
+            },
+            {
+              "name": "grant_type",
+              "value": "authorization_code"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        -144
+      ],
+      "id": "fd0598d2-7e0c-4a44-9e99-2354936f51af",
+      "name": "Token-Exchange",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code und State extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code und State extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Erfolgreich?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erfolgreich?": {
+      "main": [
+        [
+          {
+            "node": "Token-Exchange",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fehler-Nachricht bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant Credentials speichern": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fehler-Nachricht bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fehler-Nachricht bauen": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token-Exchange": {
+      "main": [
+        [
+          {
+            "node": "Tenant Credentials speichern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fehler-Nachricht bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

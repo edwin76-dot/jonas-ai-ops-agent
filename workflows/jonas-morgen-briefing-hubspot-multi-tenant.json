@@ -1,0 +1,890 @@
+{
+  "id": "d6yEf2WKqJ90tuJe",
+  "name": "Jonas Morgen-Briefing (HubSpot multi-tenant)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        6096,
+        3952
+      ],
+      "id": "ea1530c3-a5ef-4bd0-9d4f-bebca37f46e3",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile,\n       (SELECT telegram_chat_id FROM tenants WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}') AS telegram_chat_id\nFROM jonas_profile\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6768,
+        3152
+      ],
+      "id": "238a76a7-cdbb-44ae-ad3d-7bea483f4510",
+      "name": "Profil laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden').first().json.profile || {};\nconst isActive = profile.briefing_aktiv !== 'false'; // Default true\nconst targetTime = profile.briefing_uhrzeit || '07:30';\nconst [targetHour, targetMinuteRaw] = targetTime.split(':').map(Number);\nconst targetMinute = targetMinuteRaw || 0;\n\nconst berlinNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Berlin' }));\nconst currentHour = berlinNow.getHours();\nconst currentMinute = berlinNow.getMinutes();\n\n// Trigger laeuft alle 5 Minuten -> Ziel-Minute auf denselben 5er-Raster runden,\n// robust falls briefing_uhrzeit keinen glatten 5er-Wert enthaelt (z.B. '07:32')\nconst bucket5 = m => Math.floor(m / 5) * 5;\n\nreturn [{ json: { match: isActive && currentHour === targetHour && bucket5(currentMinute) === bucket5(targetMinute), profile } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6992,
+        3152
+      ],
+      "id": "cfb2de2b-695a-437d-afd3-cd8eb8820062",
+      "name": "Uhrzeit-Gate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_briefing_sent (tenant_id, sent_date)\nVALUES ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', CURRENT_DATE)\nON CONFLICT DO NOTHING\nRETURNING sent_date::text AS sent_date",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        7440,
+        3152
+      ],
+      "id": "22753963-da1a-478c-82d6-3dbbe2f3d127",
+      "name": "Briefing bereits gesendet?",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "135d60e6-5066-4d71-8fac-e2e87e266d24",
+              "leftValue": "={{ $json.sent_date }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7664,
+        3152
+      ],
+      "id": "42887e7d-1d20-427a-9996-dfb231d14fa9",
+      "name": "Schon gesendet heute?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e62d3a38-1ddb-40bd-8af8-84059d48e1e7",
+              "leftValue": "={{ $json.match }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7216,
+        3152
+      ],
+      "id": "273df13a-078d-4e6f-9c2c-6f0bcf6554f6",
+      "name": "Stunde erreicht?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT kategorie, zusammenfassung, sender, draft_erstellt\nFROM jonas_email_recent\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AND kategorie IN ('WICHTIG', 'LEAD')\n  AND created_at > NOW() - INTERVAL '24 hours'\nORDER BY created_at DESC",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        8560,
+        2800
+      ],
+      "id": "41ba00f5-a371-4178-978d-c2dc02ba0b22",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Briefing)').item.json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filterGroups\": [\n    {\n      \"filters\": [\n        {\n          \"propertyName\": \"dealstage\",\n          \"operator\": \"NOT_IN\",\n          \"values\": [\"closedwon\", \"closedlost\"]\n        }\n      ]\n    }\n  ],\n  \"properties\": [\"dealname\", \"dealstage\", \"hs_lastmodifieddate\"],\n  \"limit\": 100\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        8560,
+        3568
+      ],
+      "id": "e0747186-b43e-43d2-a276-3cfe15eb7af5",
+      "name": "HubSpot Deals suchen",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "numberInputs": 6
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        8784,
+        3216
+      ],
+      "id": "e5dbcbe9-a50d-4686-a954-659eee81eecf",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeAll(nodeName) {\n  try { return $(nodeName).all().map(i => i.json); } catch (e) { return []; }\n}\n\nconst events = safeAll('Events entpacken (Briefing)').filter(e => !e.error);\nconst emails = safeAll('Execute a SQL query').filter(e => !e.error);\n\nconst hubspotSkipped = safeAll('HubSpot Uebersprungen (Briefing)').length > 0;\nconst hubspotRaw = safeAll('HubSpot Deals suchen');\nconst dealsFailed = !hubspotSkipped && hubspotRaw.some(d => d.error);\nconst deals = hubspotRaw\n  .filter(d => !d.error && Array.isArray(d.results))\n  .flatMap(d => d.results);\n\nconst tokenMissing = safeAll('Kein Token (Briefing)').length > 0;\nconst calendarApiError = safeAll('Kalender Fehler (Briefing)').length > 0;\nconst eventsFailed = tokenMissing || calendarApiError;\nconst emailsFailed = safeAll('Execute a SQL query').some(e => e.error);\n\n// NEU: Graph liefert start.dateTime standardmaessig in UTC (start.timeZone\n// bestaetigt das) — explizite Konvertierung nach Europe/Berlin noetig,\n// sonst reicht der Code die rohe UTC-Stunde unveraendert an Claude durch.\nfunction toBerlinTimeStr(dateTimeStr) {\n  if (!dateTimeStr) return null;\n  // Graph-Strings kommen meist ohne 'Z'/Offset -> als UTC interpretieren\n  const iso = /Z$|[+-]\\d{2}:\\d{2}$/.test(dateTimeStr) ? dateTimeStr : dateTimeStr + 'Z';\n  const d = new Date(iso);\n  return d.toLocaleTimeString('de-DE', {\n    timeZone: 'Europe/Berlin',\n    hour: '2-digit',\n    minute: '2-digit'\n  });\n}\n\nconst eventsConverted = events.map(e => ({\n  subject: e.subject,\n  start: toBerlinTimeStr(e.start?.dateTime)\n}));\n\nconst STALE_DAYS = 7;\nconst now = Date.now();\n\nconst dealsEnriched = deals.map(d => {\n  const lastMod = d.properties?.hs_lastmodifieddate\n    ? new Date(d.properties.hs_lastmodifieddate).getTime() : null;\n  const daysSince = lastMod ? Math.floor((now - lastMod) / (1000 * 60 * 60 * 24)) : null;\n  return {\n    name: d.properties?.dealname,\n    stage: d.properties?.dealstage,\n    daysSinceMovement: daysSince,\n    stale: daysSince !== null && daysSince > STALE_DAYS\n  };\n});\n\nconst staleDeals = dealsEnriched.filter(d => d.stale);\nconst activeDeals = dealsEnriched.filter(d => !d.stale);\n\n// Identitaet des aktuell verarbeiteten Tenants explizit mitfuehren.\n// WICHTIG (Fix 17.09.2026, Cross-Tenant-Leck #2): NICHT $('Aktive Tenants laden').first()\n// verwenden -- dieser Node laeuft NUR EINMAL vor der Loop mit allen Tenants als\n// separate Items, .first() liefert deshalb IMMER dasselbe (das erste) Item, egal\n// welche Loop-Iteration gerade laeuft. Stattdessen 'Profil laden' nutzen -- der\n// laeuft PRO ITERATION genau einmal, .first() ist dort tatsaechlich sicher\n// (liefert exakt das Item der aktuellen Iteration), exakt wie tenantName unten.\nconst telegramChatId = $('Profil laden').first().json.telegram_chat_id;\nconst tenantName = ($('Profil laden').first().json.profile || {}).name || null;\n\nreturn [{\n  json: {\n    telegram_chat_id: telegramChatId,\n    tenant_name: tenantName,\n    eventsText: tokenMissing ? 'Outlook nicht verbunden.'\n      : calendarApiError ? 'Kalender konnte nicht geladen werden.'\n      : (eventsConverted.length ? JSON.stringify(eventsConverted) : 'Keine Termine heute.'),\n    emailsText: emailsFailed ? 'Emails konnten nicht geladen werden.'\n      : (emails.length ? JSON.stringify(emails) : 'Keine wichtigen Mails.'),\n    dealsText: hubspotSkipped ? 'HubSpot nicht aktiv.'\n      : dealsFailed ? 'HubSpot konnte nicht geladen werden.'\n      : JSON.stringify({ staleDeals: staleDeals.length ? staleDeals : 'keine',\n          activeDealsCount: activeDeals.length })\n  }\n}];;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9008,
+        3280
+      ],
+      "id": "04e7e221-c036-4f56-a25a-c7d73c7b923a",
+      "name": "Briefing Daten aufbereiten"
+    },
+    {
+      "parameters": {
+        "jsCode": "function escapeHtml(text) {\n  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/_/g, ' ').replace(/\\*/g, ' ').replace(/`/g, \"'\");\n}\nconst text = $json.text || 'Briefing konnte nicht formuliert werden.';\nconst chatId = $('Briefing Daten aufbereiten').first().json.telegram_chat_id;\nreturn [{ json: { reply: escapeHtml(text), telegram_chat_id: chatId } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9456,
+        3280
+      ],
+      "id": "e0142974-c192-498c-89d6-1920dbdb8626",
+      "name": "Escape"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        9680,
+        3552
+      ],
+      "id": "4b7be9c8-aea2-4627-98b5-225ac3f2e341",
+      "name": "Telegram an Jonas (Briefing)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ \"Du bist Jonas, der AI Ops-Agent von \" + ($json.tenant_name || \"des Nutzers\") + \". Formuliere ein kurzes, proaktives Morgen-Briefing (max. 6-8 Saetze). Struktur: 1) Termine heute, 2) wichtige/offene Mails, 3) HubSpot - hebe NUR staleDeals namentlich hervor, activeDealsCount nur als knappe Randnotiz. Keine Erfindungen, nur gelieferte Daten nutzen. Bei 'konnte nicht geladen werden' ehrlich erwaehnen.\" }}",
+            "maxTokens": "400",
+            "userMessage": "={{ \"Termine: \" + $json.eventsText + \"\\nMails: \" + $json.emailsText + \"\\nDeals: \" + $json.dealsText }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        9232,
+        3280
+      ],
+      "id": "0489dece-4db5-4516-8b3f-461f99d255e0",
+      "name": "LLM Call"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id\nFROM tenants t\nWHERE t.status = 'active'\n  AND t.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6320,
+        3952
+      ],
+      "id": "357c8567-044c-4cec-87d8-c4f25516a9d2",
+      "name": "Aktive Tenants laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        6544,
+        3952
+      ],
+      "id": "aa8b8c23-3393-43e2-83a6-80a525e02327",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Aktive Tenants laden').item.json.tenant_id }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7888,
+        3152
+      ],
+      "id": "615f82f4-f54d-429e-8dfa-2214bb14c75d",
+      "name": "Graph Token (Briefing)",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0fe549d4-b5f3-4fe2-8217-c29eccbcc5bb",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        8112,
+        3152
+      ],
+      "id": "639deec0-351c-4766-9255-7aa3d5937cea",
+      "name": "Token OK? (Briefing)"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/calendarView?startDateTime={{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd') }}T00:00:00&endDateTime={{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd') }}T23:59:59&$top=50&$orderby=start/dateTime",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Graph Token (Briefing)').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        8336,
+        3056
+      ],
+      "id": "3e1bb9d0-bc6c-4377-8e86-d16446f01869",
+      "name": "Kalenderdaten abrufen (Briefing)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.value || [];\nreturn events.map(e => ({ json: e }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8560,
+        2992
+      ],
+      "id": "cfe63ed8-0888-4687-9198-ab67a6a79053",
+      "name": "Events entpacken (Briefing)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: true, reason: 'api_error' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8560,
+        3184
+      ],
+      "id": "f300a58a-9190-41a4-9b7f-41192f445df5",
+      "name": "Kalender Fehler (Briefing)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: true, reason: 'not_connected' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8560,
+        3376
+      ],
+      "id": "1ad215c1-738b-4cbe-ba8d-bd81712cec42",
+      "name": "Kein Token (Briefing)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "326ace84-aaa2-4d11-88a7-5384c0998a8c",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        8336,
+        3632
+      ],
+      "id": "c06620b1-e9e6-46a2-b317-f31ddcaae55e",
+      "name": "HubSpot aktiv? (Briefing)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skipped: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8560,
+        3760
+      ],
+      "id": "47bdbb89-8ece-4920-a5b9-7c39540a4d8d",
+      "name": "HubSpot Uebersprungen (Briefing)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        8112,
+        3632
+      ],
+      "id": "e0bc9b45-f6d5-4174-860a-b4eeed4636de",
+      "name": "HubSpot Token laden (Briefing)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden": {
+      "main": [
+        [
+          {
+            "node": "Uhrzeit-Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uhrzeit-Gate": {
+      "main": [
+        [
+          {
+            "node": "Stunde erreicht?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Briefing bereits gesendet?": {
+      "main": [
+        [
+          {
+            "node": "Schon gesendet heute?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stunde erreicht?": {
+      "main": [
+        [
+          {
+            "node": "Briefing bereits gesendet?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schon gesendet heute?": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Graph Token (Briefing)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HubSpot Token laden (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ],
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "HubSpot Deals suchen": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ],
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Briefing Daten aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Briefing Daten aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "LLM Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escape": {
+      "main": [
+        [
+          {
+            "node": "Telegram an Jonas (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call": {
+      "main": [
+        [
+          {
+            "node": "Escape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Token OK? (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token OK? (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Kalenderdaten abrufen (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Token (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalenderdaten abrufen (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Events entpacken (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kalender Fehler (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events entpacken (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalender Fehler (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Kein Token (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HubSpot aktiv? (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Deals suchen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Uebersprungen (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Uebersprungen (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Telegram an Jonas (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Briefing)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot aktiv? (Briefing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

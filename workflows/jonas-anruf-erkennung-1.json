@@ -1,0 +1,444 @@
+{
+  "id": "8bEDRd3eK5cIwvAC",
+  "name": "Jonas Anruf-Erkennung 1",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "anruf-erkennung",
+        "options": {}
+      },
+      "id": "47d241fa-1bb6-4c77-95de-425878373224",
+      "name": "Anruf Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1440,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Jonas -- Anruf-Erkennung, Node 1: Payload von Tasker normalisieren.\n// Erwartetes Tasker-Payload (JSON-Body im HTTP-Request-Task):\n//   { \"number\": \"%CNUM\", \"contactName\": \"%CNAME\", \"callType\": \"missed|answered\", \"timestamp\": \"%TIME\" }\n// contactName ist leer/fehlt, wenn Android die Nummer keinem lokalen Kontakt zuordnen konnte --\n// das ist bereits die erste, kostenlose Abgleich-Stufe (laeuft lokal auf dem Handy, kein Server noetig).\n//\n// WICHTIG: tenant_id ist hier ein Platzhalter -- vor dem Import mit der echten tenant_id\n// aus der tenants-Tabelle ersetzen (SELECT tenant_id FROM tenants WHERE telegram_chat_id = ...).\nconst TENANT_ID = 'TENANT_ID_HIER_EINTRAGEN';\n\nconst body = $input.first().json.body || $input.first().json;\nconst number = String(body.number || '').trim();\nconst contactName = String(body.contactName || '').trim();\nconst callType = (body.callType === 'missed') ? 'missed' : 'answered';\n\nreturn [{\n  json: {\n    tenant_id: TENANT_ID,\n    number,\n    contactName,\n    hasContact: contactName.length > 0,\n    callType\n  }\n}];\n"
+      },
+      "id": "8d8b0eb0-f247-4223-8b10-ffbdc7a6892f",
+      "name": "Anruf normalisieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "96e63736-b0d3-41ad-98ac-750de7d7df6b",
+              "leftValue": "={{ $json.hasContact }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ebd20c59-8c10-473f-8a01-b24554ba1728",
+      "name": "Kontakt bekannt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -992,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.tellows.de/basic/num/{{ $json.number }}?json=1&partner=PARTNER_HIER&apikey=API_KEY_HIER",
+        "options": {}
+      },
+      "id": "5ae53055-a975-471c-8fa3-545b51dfe693",
+      "name": "Tellows Abfrage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -752,
+        224
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prueft ob Tellows einen brauchbaren Treffer geliefert hat (Name oder genug Meldungen).\n// Feldnamen (tellows.score/comments/name) gemaess oeffentlich bekanntem Basic-API-Format --\n// bei Bedarf an die tatsaechliche Antwortstruktur anpassen, sobald ein echter Test lief.\nconst t = ($json.tellows) || $json;\nconst score = t.score != null ? Number(t.score) : null;\nconst comments = t.comments != null ? Number(t.comments) : 0;\nconst name = (t.name || '').trim();\nconst hasHit = comments > 0 || !!name;\nreturn [{ json: { tellowsHit: hasHit, tellowsName: name, tellowsScore: score } }];\n"
+      },
+      "id": "313934cb-2be0-4f67-8f45-1c347751c405",
+      "name": "Tellows Ergebnis pruefen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3f12e449-a275-4b2f-9551-8a020744f353",
+              "leftValue": "={{ $json.tellowsHit }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a3eed974-70c6-4579-b256-fcf66f990e27",
+      "name": "Tellows Treffer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -320,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.search.brave.com/res/v1/web/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Anruf normalisieren').item.json.number }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Subscription-Token",
+              "value": "BRAVE_API_KEY_HIER"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "757ebc86-dd60-428e-bcb1-b44ce0ec9352",
+      "name": "Brave Search Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -96,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nimmt den Titel/Snippet des ersten Suchtreffers als grobe Identifikation --\n// bewusst simpel gehalten (kein LLM-Call noetig fuer v1), liefert oft schon einen\n// Firmennamen oder Hinweis ('Spam gemeldet auf...') aus dem Snippet.\nconst results = ($json.web && $json.web.results) || [];\nconst first = results[0];\nconst guess = first ? `${first.title || ''} -- ${first.description || ''}`.trim() : '';\nreturn [{ json: { braveGuess: guess } }];\n"
+      },
+      "id": "43df42aa-3a63-47a8-a734-9af721b28a07",
+      "name": "Brave Ergebnis zusammenfassen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Jonas -- Anruf-Erkennung: fasst alle drei Abgleich-Stufen zu EINER Identifikation zusammen.\n// Reihenfolge/Prioritaet: Android-Kontakt > Tellows-Treffer > Brave-Search-Vermutung > unbekannt.\nconst base = $('Anruf normalisieren').item.json;\nlet identifiedAs = null;\nlet source = 'unbekannt';\nlet spamScore = null;\n\nif (base.hasContact) {\n  identifiedAs = base.contactName;\n  source = 'kontakt';\n} else {\n  const tellows = $('Tellows Ergebnis pruefen').first();\n  if (tellows && tellows.json.tellowsHit) {\n    identifiedAs = tellows.json.tellowsName || `Score ${tellows.json.tellowsScore} (Tellows, kein Name)`;\n    source = 'tellows';\n    spamScore = tellows.json.tellowsScore;\n  } else {\n    const brave = $('Brave Ergebnis zusammenfassen').first();\n    if (brave && brave.json.braveGuess) {\n      identifiedAs = brave.json.braveGuess;\n      source = 'brave_search';\n    }\n  }\n}\n\nreturn [{\n  json: {\n    tenant_id: base.tenant_id,\n    number: base.number,\n    callType: base.callType,\n    identifiedAs,\n    source,\n    spamScore\n  }\n}];\n"
+      },
+      "id": "f9dbd5dd-0127-4e99-981a-86cce1749a7b",
+      "name": "Identifikation zusammenfassen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_call_log (tenant_id, number, identified_as, source, spam_score, call_type)\nVALUES (\n  '{{ $json.tenant_id.replace(/'/g, \"''\") }}',\n  '{{ $json.number.replace(/'/g, \"''\") }}',\n  {{ $json.identifiedAs ? \"'\" + $json.identifiedAs.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  '{{ $json.source.replace(/'/g, \"''\") }}',\n  {{ $json.spamScore != null ? $json.spamScore : 'NULL' }},\n  '{{ $json.callType.replace(/'/g, \"''\") }}'\n)",
+        "options": {}
+      },
+      "id": "7190bb54-4ae2-496b-8874-c7eb64bce4a5",
+      "name": "Anruf loggen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        576,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "708ced25-23b6-484a-aa91-448568d268b3",
+              "leftValue": "={{ $('Identifikation zusammenfassen').item.json.callType }}",
+              "rightValue": "missed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2d9a38b3-f4fa-45b2-bf6a-5ed1fe72c2b9",
+      "name": "Verpasst?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_memory (tenant_id, type, content, due_date)\nVALUES (\n  '{{ $('Identifikation zusammenfassen').item.json.tenant_id.replace(/'/g, \"''\") }}',\n  'task',\n  'Rueckruf an {{ ($(\"Identifikation zusammenfassen\").item.json.identifiedAs || $(\"Identifikation zusammenfassen\").item.json.number).replace(/'/g, \"''\") }} (verpasster Anruf)',\n  CURRENT_DATE\n)",
+        "options": {}
+      },
+      "id": "40f05b77-df45-484b-a00d-3434f2ce8fd6",
+      "name": "Rueckruf-Reminder speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1024,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "TELEGRAM_CHAT_ID_HIER",
+        "text": "=📞 Verpasster Anruf von {{ $('Identifikation zusammenfassen').item.json.identifiedAs || $('Identifikation zusammenfassen').item.json.number }}{{ $('Identifikation zusammenfassen').item.json.spamScore ? (' (Tellows Spam-Score: ' + $('Identifikation zusammenfassen').item.json.spamScore + '/9)') : '' }}\nQuelle: {{ $('Identifikation zusammenfassen').item.json.source }}\nAls Rueckruf-Erinnerung gespeichert.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "23047619-0da6-442b-b6cf-958344c5bf98",
+      "name": "Telegram Anruf-Meldung",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        144
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Anruf Webhook": {
+      "main": [
+        [
+          {
+            "node": "Anruf normalisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anruf normalisieren": {
+      "main": [
+        [
+          {
+            "node": "Kontakt bekannt?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt bekannt?": {
+      "main": [
+        [
+          {
+            "node": "Identifikation zusammenfassen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tellows Abfrage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tellows Abfrage": {
+      "main": [
+        [
+          {
+            "node": "Tellows Ergebnis pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tellows Ergebnis pruefen": {
+      "main": [
+        [
+          {
+            "node": "Tellows Treffer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tellows Treffer?": {
+      "main": [
+        [
+          {
+            "node": "Identifikation zusammenfassen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Brave Search Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brave Search Fallback": {
+      "main": [
+        [
+          {
+            "node": "Brave Ergebnis zusammenfassen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brave Ergebnis zusammenfassen": {
+      "main": [
+        [
+          {
+            "node": "Identifikation zusammenfassen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identifikation zusammenfassen": {
+      "main": [
+        [
+          {
+            "node": "Anruf loggen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anruf loggen": {
+      "main": [
+        [
+          {
+            "node": "Verpasst?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verpasst?": {
+      "main": [
+        [
+          {
+            "node": "Rueckruf-Reminder speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rueckruf-Reminder speichern": {
+      "main": [
+        [
+          {
+            "node": "Telegram Anruf-Meldung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

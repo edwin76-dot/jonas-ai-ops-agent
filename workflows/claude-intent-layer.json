@@ -1,0 +1,168 @@
+{
+  "id": "NfpLOEAOEX09yctQ",
+  "name": "Claude Intent Layer",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ========================================\n// Code Node 2 — Datum extrahieren & ISO konvertieren\n// Timezone-sicher: immer Europe/Berlin als Referenz\n// ========================================\n\nconst text = $json.cleanedText.toLowerCase();\n\n// Berliner Datum als Referenz\nconst now = new Date();\nconst berlinNow = new Date(now.toLocaleString(\"en-US\", { timeZone: \"Europe/Berlin\" }));\n\nfunction toISO(date) {\n  const pad = (n) => String(n).padStart(2, \"0\");\n  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;\n}\n\nlet isoDate = null;\n\n// ---------- 1. Konkretes Datum (9.9.2026 / 09.09.26 / 9. September 2026) ----------\nconst monthNames = {\n  januar:1, februar:2, märz:3, april:4, mai:5, juni:6,\n  juli:7, august:8, september:9, oktober:10, november:11, dezember:12\n};\n\n// Format: 9.9.2026 oder 09.09.2026 oder 9.9.26\nconst numericDate = text.match(/(\\d{1,2})\\.(\\d{1,2})\\.(\\d{2,4})/);\nif (numericDate) {\n  const day   = parseInt(numericDate[1], 10);\n  const month = parseInt(numericDate[2], 10) - 1;\n  let year    = parseInt(numericDate[3], 10);\n  if (year < 100) year += 2000;\n  const d = new Date(year, month, day);\n  isoDate = toISO(d);\n}\n\n// Format: 9. September 2026 oder 9. September\nif (!isoDate) {\n  for (const [name, month] of Object.entries(monthNames)) {\n    const pattern = new RegExp(`(\\\\d{1,2})\\\\.?\\\\s*${name}\\\\s*(\\\\d{4})?`);\n    const match = text.match(pattern);\n    if (match) {\n      const day  = parseInt(match[1], 10);\n      const year = match[2] ? parseInt(match[2], 10) : berlinNow.getFullYear();\n      const d    = new Date(year, month - 1, day);\n      isoDate    = toISO(d);\n      break;\n    }\n  }\n}\n\n// ---------- 2. Relative Daten ----------\nif (!isoDate) {\n  if (text.includes(\"übermorgen\")) {\n    const d = new Date(berlinNow);\n    d.setDate(berlinNow.getDate() + 2);\n    isoDate = toISO(d);\n  } else if (text.includes(\"morgen\")) {\n    const d = new Date(berlinNow);\n    d.setDate(berlinNow.getDate() + 1);\n    isoDate = toISO(d);\n  } else if (text.includes(\"heute\")) {\n    isoDate = toISO(berlinNow);\n  }\n}\n\n// ---------- 3. Wochentage ----------\nif (!isoDate) {\n  const weekdays = {\n    sonntag:0, montag:1, dienstag:2, mittwoch:3,\n    donnerstag:4, freitag:5, samstag:6,\n  };\n  for (const [day, value] of Object.entries(weekdays)) {\n    if (text.includes(day)) {\n      const d = new Date(berlinNow);\n      let diff = value - berlinNow.getDay();\n      if (diff <= 0) diff += 7;\n      d.setDate(berlinNow.getDate() + diff);\n      isoDate = toISO(d);\n      break;\n    }\n  }\n}\n\nif (!isoDate) throw new Error(\"Kein Datum erkannt\");\n\nreturn [{\n  json: {\n    cleanedText: $json.cleanedText,\n    isoDate,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        0
+      ],
+      "id": "3f28769b-57ad-4075-b76b-10028dc54a18",
+      "name": "Datum extrahieren"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 100,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\n        \"Extrahiere aus diesem Text nur Uhrzeit und Titel des Termins.\\nAntworte NUR in diesem exakten Format: [uhrzeit] Uhr [titel]\\nBeispiele:\\nInput: heute 18 Uhr Zahnarzt -> Output: 18 Uhr Zahnarzt\\nInput: morgen 10 Uhr Meeting mit Sarah -> Output: 10 Uhr Meeting mit Sarah\\nInput: 9.9.2026 ganztägig Urlaub -> Output: ganztägig Urlaub\\nKein weiterer Text, keine Erklärung. Text: \" + $json.cleanedText\n      ) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        560,
+        0
+      ],
+      "id": "d21364de-0501-49d4-9b66-9406b81cb832",
+      "name": "Claude Intent Extraktion"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.example.com/webhook/kalender",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $('Datum extrahieren').first().json.isoDate + ' ' + $json.content[0].text.replace(/[\\n\\r]/g, ' ').trim() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        736,
+        0
+      ],
+      "id": "17388fa3-a11a-406d-9832-f398c9b7556b",
+      "name": "Kalender Webhook aufrufen"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.message.text || \"\";\n\nconst cleaned = text\n  .replace(/\\\\/g, '')\n  .replace(/\"/g, '')\n  .replace(/[\\n\\r\\t]/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nreturn [{ json: { cleanedText: cleaned } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "a047c957-2d60-4213-99d8-3360b25a81f6",
+      "name": "Text bereinigen"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        0
+      ],
+      "id": "ebe61a3c-1672-4e1a-96cb-7aafa7d12aaf",
+      "name": "Telegram Eingang",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Datum extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Claude Intent Extraktion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Intent Extraktion": {
+      "main": [
+        [
+          {
+            "node": "Kalender Webhook aufrufen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text bereinigen": {
+      "main": [
+        [
+          {
+            "node": "Datum extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Eingang": {
+      "main": [
+        [
+          {
+            "node": "Text bereinigen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

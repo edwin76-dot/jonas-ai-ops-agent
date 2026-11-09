@@ -1,0 +1,1347 @@
+{
+  "id": "DRFEpWNo1yIC84r3",
+  "name": "Jonas Meeting Nachbereitung 1",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -6496,
+        1056
+      ],
+      "id": "5b31b061-46c7-483e-b0ae-b655c227fc24",
+      "name": "Meeting Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_meeting_nachbereitung_lock\nSET running = false\nWHERE id = 1 AND running = true AND started_at < NOW() - INTERVAL '10 minutes';\n\nSELECT running FROM jonas_meeting_nachbereitung_lock WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -6272,
+        1056
+      ],
+      "id": "fc992b36-c5e9-4110-86fb-c314c178254e",
+      "name": "Lock prüfen (Meeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6e4163f3-06d6-4a27-8bb9-83863262b530",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -6048,
+        1056
+      ],
+      "id": "c71164aa-aa72-46a1-a746-5baf2e23d629",
+      "name": "Läuft schon? (Meeting)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_meeting_nachbereitung_lock SET running = true, started_at = NOW() WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -5824,
+        1056
+      ],
+      "id": "6d593853-4421-45ec-9a7c-4c55b9059706",
+      "name": "Lock setzen (Meeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id\nWHERE t.status = 'active' AND tc.provider = 'outlook'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -5600,
+        1056
+      ],
+      "id": "bb7d8d71-c96d-4f27-bd44-c6ac3b510993",
+      "name": "Aktive Tenants laden (Meeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -5376,
+        1056
+      ],
+      "id": "df3d0938-d9b2-4921-98c1-432b3103c543",
+      "name": "Loop Over Tenants (Meeting)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $json.tenant_id }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -5152,
+        480
+      ],
+      "id": "038f8e15-de6c-4a65-bc9d-e241b263339c",
+      "name": "Get Valid Graph Token"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + new Date(Date.now() - 25*60*1000).toISOString() + \"&endDateTime=\" + new Date().toISOString() + \"&$select=id,subject,start,end,isOnlineMeeting,onlineMeetingProvider,onlineMeeting,attendees\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4928,
+        560
+      ],
+      "id": "1dbe6104-75f3-4ab8-8b2d-c6ca9a5957c2",
+      "name": "Kürzlich beendete Meetings holen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Nur Meetings deren Ende bereits vergangen ist und die noch nicht verarbeitet wurden.\n// Verarbeitet-Check erfolgt separat gegen jonas_processed_meetings (naechster SQL-Schritt),\n// hier nur strukturelle Filterung + Aufteilung Teams vs. Nicht-Teams.\nconst now = Date.now();\nconst events = ($json.value || []).filter(e => {\n  const end = e.end && e.end.dateTime ? new Date(e.end.dateTime + 'Z').getTime() : null;\n  return end && end < now;\n});\nreturn events.map(e => ({\n  json: {\n    tenant_id: $('Loop Over Tenants (Meeting)').first().json.tenant_id,\n    telegram_chat_id: $('Loop Over Tenants (Meeting)').first().json.telegram_chat_id,\n    event_id: e.id,\n    subject: e.subject || 'Meeting',\n    isTeams: e.isOnlineMeeting === true && e.onlineMeetingProvider === 'teamsForBusiness',\n    joinUrl: e.onlineMeeting ? e.onlineMeeting.joinUrl : null,\n    attendeeCount: (e.attendees || []).length,\n    attendeeEmails: (e.attendees || []).map(a => a.emailAddress && a.emailAddress.address).filter(Boolean)\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4704,
+        560
+      ],
+      "id": "15a06a04-fbf5-49a4-81d7-be4da7339aec",
+      "name": "Meetings filtern (beendet)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS found FROM jonas_processed_meetings\nWHERE tenant_id = '{{ $('Meetings filtern (beendet)').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND event_id = '{{ $('Meetings filtern (beendet)').item.json.event_id.replace(/'/g, \"''\") }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -4480,
+        560
+      ],
+      "id": "807aac25-12f0-40b8-ab5f-3304d279ced9",
+      "name": "Bereits verarbeitet? (Meeting)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "mb-01",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4256,
+        560
+      ],
+      "id": "5f588f2d-0fcc-4405-b3ae-83cc241fe8c2",
+      "name": "Schon bearbeitet?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "65b7885e-6e3c-46df-8002-4c14815f6897",
+              "leftValue": "={{ $('Meetings filtern (beendet)').item.json.isTeams }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4032,
+        560
+      ],
+      "id": "634d5606-6a89-4761-8175-ee642a9839ce",
+      "name": "Ist Teams-Meeting?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2376c6eb-7a1d-4451-9dc2-dc43cc2a70ed",
+              "leftValue": "={{ $('Meetings filtern (beendet)').item.json.attendeeCount }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1120,
+        944
+      ],
+      "id": "cfb0c885-aea3-453f-8abd-2f9afc051100",
+      "name": "Sieht nach echtem Termin aus?"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst subject = $('Meetings filtern (beendet)').item.json.subject;\nreturn [{ json: { reply: `📋 Meeting \"${subject}\" ist gerade zu Ende — kurze Sprachnotiz zur Nachbereitung? (kein Teams-Meeting, daher kein automatisches Transkript)` } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        944
+      ],
+      "id": "f970857b-91b2-4c7a-9e89-500ca2c2abff",
+      "name": "Nachbereitung-Nudge Text bauen"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Meetings filtern (beendet)').item.json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -672,
+        944
+      ],
+      "id": "0651da90-9b50-4e72-b035-1b571ee42efd",
+      "name": "Telegram Nudge senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/onlineMeetings?$filter=JoinWebUrl eq '\" + encodeURIComponent($('Meetings filtern (beendet)').item.json.joinUrl) + \"'\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -3808,
+        432
+      ],
+      "id": "c699dfe7-294a-485b-bb45-ad271e9d1e11",
+      "name": "Online-Meeting-ID auflösen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "65167865-77ce-4d8d-9a68-46152d377f52",
+              "leftValue": "={{ ($json.value || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3584,
+        368
+      ],
+      "id": "f498ed26-03cc-4327-8cbd-553d9f767891",
+      "name": "Meeting-ID gefunden?"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/onlineMeetings/\" + $json.value[0].id + \"/transcripts\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -3360,
+        288
+      ],
+      "id": "48a09db9-98e8-4f09-8121-3be4de2135d5",
+      "name": "Transcript-Liste abrufen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "691b4dc0-f74b-4d7b-a38f-bdbd7d65bbb4",
+              "leftValue": "={{ ($json.value || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3136,
+        224
+      ],
+      "id": "80208e1e-2d1c-450e-a8f9-714daa30cbb6",
+      "name": "Transcript vorhanden?"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/onlineMeetings/\" + $('Online-Meeting-ID auflösen').first().json.value[0].id + \"/transcripts/\" + $json.value[0].id + \"/content?$format=text/vtt\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2912,
+        176
+      ],
+      "id": "bdc55695-9b7d-45e2-bee5-198363dc13cf",
+      "name": "Transcript-Inhalt abrufen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Sehr einfacher VTT-Parser: entfernt Timestamps/Cue-Nummern, behaelt Sprecher+Text.\n// UNGETESTET gegen echte Graph-Transcript-VTT-Ausgabe -- vor Live-Schaltung mit\n// einem echten Transcript-Export verifizieren (Format kann <v Sprecher>Text</v> Tags enthalten).\nconst raw = typeof $json.data === 'string' ? $json.data : ($json.body || '');\nconst lines = raw.split('\\n');\nconst textLines = [];\nfor (const line of lines) {\n  const t = line.trim();\n  if (!t || t === 'WEBVTT') continue;\n  if (/^\\d+$/.test(t)) continue;\n  if (/-->/.test(t)) continue;\n  textLines.push(t.replace(/<\\/?v[^>]*>/g, ''));\n}\nreturn [{ json: { transcriptText: textLines.join('\\n').slice(0, 15000) } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2688,
+        144
+      ],
+      "id": "f7a1c8c4-46ab-440a-8e44-61e18b44c306",
+      "name": "VTT parsen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ \"Du bist der Assistent des Nutzers fuer Meeting-Nachbereitung. Fasse das folgende Transkript eines Kundentermins zusammen. Antworte AUSSCHLIESSLICH mit einem gueltigen JSON-Objekt, kein Markdown.\\n\\nFormat: {\\\"kernpunkte\\\":\\\"2-3 Saetze, worum es ging\\\",\\\"zusagen\\\":\\\"was wurde zugesagt/vereinbart, oder 'keine'\\\",\\\"naechste_schritte\\\":\\\"was als naechstes zu tun ist, oder 'keine'\\\"}\\n\\nTranskript:\\n\" + $('VTT parsen').first().json.transcriptText }}",
+            "userMessage": "Fasse zusammen."
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -2464,
+        144
+      ],
+      "id": "c5bcadcc-5a11-4a1b-98bb-37753dc8e037",
+      "name": "LLM Call (Meeting-Zusammenfassung)"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet parsed;\ntry {\n  const raw = $json.text || '';\n  const clean = raw.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch (e) {\n  parsed = { kernpunkte: $json.text || 'Zusammenfassung nicht verfuegbar.', zusagen: 'unbekannt', naechste_schritte: 'unbekannt' };\n}\nreturn [{ json: parsed }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2240,
+        144
+      ],
+      "id": "57294cdd-1eb1-4c40-ab30-c9bd28e5c34c",
+      "name": "Zusammenfassung parsen"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Meetings filtern (beendet)').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2016,
+        144
+      ],
+      "id": "a1200d1d-ff41-4bc0-9238-08cece56fc48",
+      "name": "HubSpot Token laden (Meeting)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "864868f9-ee3f-4f11-9d03-ce96633e6b08",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1792,
+        144
+      ],
+      "id": "48fc0b8e-6176-4bef-ab39-8ae8d2fc3aa2",
+      "name": "HubSpot verbunden? (Meeting)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Meeting)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filterGroups: [{ filters: [{ propertyName: 'email', operator: 'IN', values: $('Meetings filtern (beendet)').item.json.attendeeEmails }] }], properties: ['email','firstname','lastname','associatedcompanyid'], limit: 5 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1568,
+        80
+      ],
+      "id": "ef5b85e1-9ecc-4c35-ab9f-38c68bd6719c",
+      "name": "HubSpot Kontakte suchen (Meeting)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results = ($json.results || []).filter(r => r && r.id);\nreturn [{ json: { hasContact: results.length > 0, contactId: results.length ? results[0].id : null } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1344,
+        80
+      ],
+      "id": "981222eb-434f-4d52-9872-480cad1fef61",
+      "name": "Kontakt-Treffer prüfen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c88306ea-1a5e-4585-851b-dcfbe0d58ce9",
+              "leftValue": "={{ $json.hasContact }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1120,
+        80
+      ],
+      "id": "4c8d659a-364f-485e-92c9-511d7d0bb207",
+      "name": "Kontakt gefunden?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Meeting)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { hs_note_body: \"Meeting-Nachbereitung (automatisch): \" + $('Zusammenfassung parsen').first().json.kernpunkte + \"\\n\\nZusagen: \" + $('Zusammenfassung parsen').first().json.zusagen + \"\\n\\nNaechste Schritte: \" + $('Zusammenfassung parsen').first().json.naechste_schritte, hs_timestamp: Date.now() }, associations: [{ to: { id: $json.contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }] }] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -896,
+        0
+      ],
+      "id": "18268487-8524-4780-96cf-be796eef11fe",
+      "name": "HubSpot Notiz anhängen (Meeting)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Meetings filtern (beendet)').item.json.telegram_chat_id }}",
+        "text": "={{ \"📋 Nachbereitung: \\\"\" + $('Meetings filtern (beendet)').item.json.subject + \"\\\"\\n\\n\" + $('Zusammenfassung parsen').first().json.kernpunkte + \"\\n\\n✅ Zusagen: \" + $('Zusammenfassung parsen').first().json.zusagen + \"\\n➡️ Naechste Schritte: \" + $('Zusammenfassung parsen').first().json.naechste_schritte + ($json.hasContact !== undefined && $json.hasContact === false ? \"\\n\\n(kein passender HubSpot-Kontakt gefunden, keine Notiz angelegt)\" : \"\") }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -672,
+        96
+      ],
+      "id": "b5a3d26f-b1aa-4641-97f2-c37c48eff3bf",
+      "name": "Telegram Meeting-Zusammenfassung senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst subject = $('Meetings filtern (beendet)').item.json.subject;\nreturn [{ json: { reply: `📋 Meeting \"${subject}\" ist zu Ende, aber es gibt kein Transkript (Transkription war vermutlich nicht aktiviert). Magst du kurz eine Sprachnotiz zur Nachbereitung schicken?` } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2688,
+        512
+      ],
+      "id": "eefb2af8-3a7a-4a62-a29b-25057420adcf",
+      "name": "Fallback: Kein Transkript Reply"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Meetings filtern (beendet)').item.json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2464,
+        512
+      ],
+      "id": "515062be-9900-4504-b9c5-2e58ada13d8e",
+      "name": "Telegram Fallback senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_processed_meetings (tenant_id, event_id, processed_at)\nVALUES ('{{ $('Meetings filtern (beendet)').item.json.tenant_id.replace(/'/g, \"''\") }}', '{{ $('Meetings filtern (beendet)').item.json.event_id.replace(/'/g, \"''\") }}', NOW())\nON CONFLICT DO NOTHING;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -448,
+        704
+      ],
+      "id": "cf0c4d48-477b-4157-9eea-3fd8d93f7078",
+      "name": "Meeting als verarbeitet markieren",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_meeting_nachbereitung_lock SET running = false WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -5152,
+        288
+      ],
+      "id": "a5ad0bc3-9265-46fd-b129-a1f3575d5251",
+      "name": "Lock freigeben (Meeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "5265e291-f61b-4bec-b71d-30340ed3f5ce",
+      "name": "Pending Nachbereitung speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -716,
+        944
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_pending_nachbereitung (tenant_id, event_id, subject, expires_at)\nVALUES (\n  '{{ $('Meetings filtern (beendet)').item.json.tenant_id.replace(/'/g, \"''\") }}',\n  '{{ $('Meetings filtern (beendet)').item.json.event_id.replace(/'/g, \"''\") }}',\n  '{{ $('Meetings filtern (beendet)').item.json.subject.replace(/'/g, \"''\") }}',\n  NOW() + INTERVAL '3 hours'\n)\nRETURNING id;",
+        "options": {}
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Meeting Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lock prüfen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock prüfen (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Läuft schon? (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Läuft schon? (Meeting)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Lock setzen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock setzen (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Lock freigeben (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Valid Graph Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Valid Graph Token": {
+      "main": [
+        [
+          {
+            "node": "Kürzlich beendete Meetings holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kürzlich beendete Meetings holen": {
+      "main": [
+        [
+          {
+            "node": "Meetings filtern (beendet)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Tenants (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meetings filtern (beendet)": {
+      "main": [
+        [
+          {
+            "node": "Bereits verarbeitet? (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bereits verarbeitet? (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Schon bearbeitet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schon bearbeitet?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ist Teams-Meeting?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ist Teams-Meeting?": {
+      "main": [
+        [
+          {
+            "node": "Online-Meeting-ID auflösen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sieht nach echtem Termin aus?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sieht nach echtem Termin aus?": {
+      "main": [
+        [
+          {
+            "node": "Nachbereitung-Nudge Text bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Meeting als verarbeitet markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nachbereitung-Nudge Text bauen": {
+      "main": [
+        [
+          {
+            "node": "Pending Nachbereitung speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Nudge senden": {
+      "main": [
+        [
+          {
+            "node": "Meeting als verarbeitet markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Online-Meeting-ID auflösen": {
+      "main": [
+        [
+          {
+            "node": "Meeting-ID gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Kein Transkript Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting-ID gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Transcript-Liste abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Kein Transkript Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript-Liste abrufen": {
+      "main": [
+        [
+          {
+            "node": "Transcript vorhanden?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Kein Transkript Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript vorhanden?": {
+      "main": [
+        [
+          {
+            "node": "Transcript-Inhalt abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Kein Transkript Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript-Inhalt abrufen": {
+      "main": [
+        [
+          {
+            "node": "VTT parsen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Kein Transkript Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VTT parsen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (Meeting-Zusammenfassung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (Meeting-Zusammenfassung)": {
+      "main": [
+        [
+          {
+            "node": "Zusammenfassung parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zusammenfassung parsen": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token laden (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot verbunden? (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot verbunden? (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakte suchen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Meeting-Zusammenfassung senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakte suchen (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Kontakt-Treffer prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kontakt-Treffer prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt-Treffer prüfen": {
+      "main": [
+        [
+          {
+            "node": "Kontakt gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt gefunden?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Notiz anhängen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Meeting-Zusammenfassung senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Notiz anhängen (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "Telegram Meeting-Zusammenfassung senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Meeting-Zusammenfassung senden": {
+      "main": [
+        [
+          {
+            "node": "Meeting als verarbeitet markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback: Kein Transkript Reply": {
+      "main": [
+        [
+          {
+            "node": "Telegram Fallback senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Fallback senden": {
+      "main": [
+        [
+          {
+            "node": "Meeting als verarbeitet markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting als verarbeitet markieren": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pending Nachbereitung speichern": {
+      "main": [
+        [
+          {
+            "node": "Telegram Nudge senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,238 @@
+{
+  "id": "GrO8diY4NzSctTpv",
+  "name": "Jonas Intent Test (Golden Set)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "intent-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "9565f93b-b55d-4ded-993b-fccdd5050da6",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simpler Shared-Secret-Schutz -- dieser Webhook loest echte LLM-Calls aus\n// (kostet Geld/Rate-Limit) und darf nicht oeffentlich frei triggerbar sein.\n// Erwartet Header 'x-test-token', verglichen gegen env INTENT_TEST_TOKEN.\n// (N8N_BLOCK_ENV_ACCESS_IN_NODE steht bereits projektweit auf false.)\n\nconst headers = $('Webhook').first().json.headers || {};\nconst token = headers['x-test-token'] || '';\nconst expected = $env.INTENT_TEST_TOKEN || '';\n\nconst authorized = expected.length > 0 && token === expected;\nconst body = $('Webhook').first().json.body || {};\n\nreturn [{ json: { authorized, text: String(body.text || '').trim() } }];"
+      },
+      "id": "04eb7e05-d164-40b9-943b-8a40fff2725c",
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "auth-check",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3abffc7d-3e4f-49b6-ac41-b1706d6772bd",
+      "name": "Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// Test-SystemPrompt bauen -- fuer den isolierten Golden-Set-Test-Webhook.\n//\n// Der grosse Template-String unten ist 1:1 aus dem produktiven\n// 'context builder'-Node kopiert (Paste vom 29.08.2026) -- NICHT\n// selbst umformuliert. NUR der obere Abschnitt (wo sonst Postgres-\n// Profil/History/Memory/etc. aus $input/$('Telegram Trigger') kaeme)\n// ist ersetzt durch feste LEERE Werte, weil dieser Test-Webhook kein\n// Tenant/keine DB hat -- Golden Set testet Intent-Klassifikation pro\n// Satz isoliert (Klassifikations-Drift), nicht profil-/kontext-\n// abhaengige Formulierung oder Disambiguation-Praezisierung.\n//\n// WICHTIG: Aendert sich der echte 'context builder' (neuer Intent,\n// geaenderte Formulierung), MUSS der Template-String hier manuell\n// nachgezogen werden -- sonst testet das Golden Set einen veralteten\n// Prompt und die Trefferquote ist wertlos. Langfristig sauberer:\n// Context Builder als eigenen wiederverwendbaren Sub-Workflow\n// auslagern (wie 'LLM Call'), dann braucht es diesen Kopie-Schritt\n// gar nicht mehr -- ist als offener Punkt vermerkt, nicht jetzt gebaut.\n// ================================================================\n\nconst userMessage = $json.text;\nif (!userMessage) {\n  throw new Error('Kein Text im Request-Body (erwartet: { \"text\": \"...\" })');\n}\n\n// Fester, kontext-freier Zustand -- entspricht \"frischer Chat, nichts offen\".\nconst userName = 'der Nutzer';\nconst profile = {};\nconst history = [];\nconst memory  = [];\nconst emails  = [];\nconst pendingActions = [];\nconst disambiguation = [];\nconst pendingHubspot  = [];\nconst leads = [];\nconst tonalitaet = profile.tonalitaet || \"foermlich\";\n\nconst tonalitaetInstruction = tonalitaet === \"locker\"\n  ? \"Dein Tonfall ist locker und kollegial, wie zwischen Kollegen die sich gut kennen. Du darfst umgangssprachlich und direkt sein.\"\n  : \"Dein Tonfall ist foermlich und professionell, aber nicht steif. Du bist hoeflich, klar und zuverlaessig wie ein erfahrener Assistent.\";\n\nconst profileText = Object.entries(profile)\n  .map(([k, v]) => `- ${k}: ${v}`)\n  .join(\"\\n\") || \"(kein Profil im Test-Kontext)\";\n\nconst memoryText = memory.length\n  ? memory.map(m => `- [id:${m.id}] [${m.type}] ${m.content}${m.due_date ? ` (faellig: ${m.due_date})` : \"\"}`).join(\"\\n\")\n  : \"(keine offenen Eintraege)\";\n\nconst emailText = emails.length\n  ? emails.map(e => `- [${e.kategorie}] ${e.zusammenfassung} (von: ${e.sender}, Entwurf erstellt: ${e.draft_erstellt ? \"ja\" : \"nein\"})`).join(\"\\n\")\n  : \"(keine aktuellen Mail-Updates in den letzten 24h)\";\n\nconst pendingText = pendingActions.length\n  ? pendingActions.map(p => `- [id:${p.id}] ${p.action === 'move' ? 'Verschieben' : 'Loeschen'} von \"${p.event_title}\"${p.new_start ? ` auf ${p.new_start}` : ''}`).join(\"\\n\")\n  : \"(keine offene Aktion wartet auf Bestaetigung)\";\n\nconst pendingHubspotText = pendingHubspot.length\n  ? pendingHubspot.map(p => `- [pending_hubspot_id:${p.id}] Deal \"${p.deal_name}\" -> neue Stage: ${p.new_stage}`).join(\"\\n\")\n  : \"(keine offene HubSpot-Aktion wartet auf Bestaetigung)\";\n\nconst leadsText = leads.length\n  ? leads.map(l => `- [id:${l.id}] ${l.name}${l.company ? ` (${l.company})` : \"\"}${l.contact_info ? `, Kontakt: ${l.contact_info}` : \"\"}${l.status ? `, Status: ${l.status}` : \"\"}${l.notes ? ` — Notizen: ${l.notes}` : \"\"}`).join(\"\\n\")\n  : \"(keine Leads gespeichert)\";\n\nconst leadDeleteText = profile.lead_delete_pending_name\n  ? `Lead \"${profile.lead_delete_pending_name}\" wartet auf Loesch-Bestaetigung.`\n  : \"(keine offene Loesch-Bestaetigung)\";\n\nconst disambiguationText = disambiguation.length\n  ? disambiguation.map(d => {\n      if (d.action === 'add_note') {\n        const candList = (d.candidates || [])\n          .map(c => `   - [hubspot_id:${c.hs_id}] [${c.hs_type === 'deal' ? 'Deal' : 'Kontakt'}] ${c.title}`)\n          .join(\"\\n\");\n        return `- [disambiguation_id:${d.id}] Aktion: HubSpot-Notiz hinzufuegen (Notiz: \"${d.note_text}\")\\n${candList}`;\n      }\n      if (d.action === 'update_stage') {\n        const candList = (d.candidates || [])\n          .map(c => `   - [hubspot_id:${c.hs_id}] [Deal] ${c.title}`)\n          .join(\"\\n\");\n        return `- [disambiguation_id:${d.id}] Aktion: Deal-Stage aendern (neue Stage: \"${d.deal_stage_raw}\")\\n${candList}`;\n      }\n      const candList = (d.candidates || [])\n        .map(c => `   - [event_id:${c.id}] ${c.title} — ${c.start}`)\n        .join(\"\\n\");\n      return `- [disambiguation_id:${d.id}] Aktion: ${d.action === 'move' ? 'Verschieben' : 'Loeschen'}\\n${candList}`;\n    }).join(\"\\n\")\n  : \"(keine offene Auswahl)\";\n\nconst historyText = \"(kein bisheriger Verlauf)\";\n\nconst now = new Date();\nconst berlinNow = new Date(now.toLocaleString(\"en-US\", { timeZone: \"Europe/Berlin\" }));\nconst heute = berlinNow.toISOString().slice(0, 10);\n\nconst systemPrompt =\n`Du bist Jonas, der persoenliche AI Ops-Agent von ${userName}.\nDu kommunizierst per Telegram. Antworte kurz und hilfreich, ohne unnoetigen Smalltalk.\n${tonalitaetInstruction}\nDu bist proaktiv: Wenn du in deinem Kontext (Termine, Mails, offene Eintraege) etwas siehst, das fuer die aktuelle Anfrage relevant ist, auch wenn nicht explizit danach gefragt wurde, weise kurz und natuerlich darauf hin (z.B. \"Uebrigens, dein naechster Termin ist in 20 Minuten.\"). Uebertreibe das nicht - nur wenn es wirklich hilfreich und zeitlich relevant ist, nicht bei jeder Anfrage.\nDu darfst im chat-Fallback niemals Faehigkeiten bestaetigen oder versprechen, die nicht als expliziter Intent in dieser Liste existieren. Wenn du unsicher bist ob du etwas kannst, sag das ehrlich statt zuzustimmen.\nHeutiges Datum: ${heute} (Europe/Berlin)\nPROFIL VON ${userName}:\n${profileText}\nOFFENE EINTRAEGE (Tasks, Deals, Erinnerungen):\n${memoryText}\nAKTUELLE EMAIL-UPDATES (letzte 24h, automatisch von Email-Triage erfasst):\n${emailText}\nOFFENE BESTAETIGUNG (wartet auf Antwort des Nutzers):\n${pendingText}\nOFFENE HUBSPOT-BESTAETIGUNG (wartet auf Antwort des Nutzers):\n${pendingHubspotText}\nGESPEICHERTE LEADS (persoenliches Lead-Gedaechtnis, ausserhalb HubSpot):\n${leadsText}\nOFFENE LOESCH-BESTAETIGUNG:\n${leadDeleteText}\nOFFENE AUSWAHL (mehrere Termine oder HubSpot-Treffer gefunden, wartet auf Praezisierung des Nutzers):\n${disambiguationText}\nBISHERIGER GESPRAECHSVERLAUF (aeltester Eintrag zuerst, NUR als Kontext):\n${historyText}\n=== ENDE GESPRAECHSVERLAUF ===\nWICHTIG - VERLAUF vs. AKTUELLE ABSICHT:\nDer GESPRAECHSVERLAUF oben dient AUSSCHLIESSLICH dazu, Rueckbezuege in der aktuellen Nachricht aufzuloesen (z.B. \"der Deal von eben\", \"diese Mail\", eine kurz zuvor genannte Email-Adresse fuer deal_contact_email). Der Verlauf ist KEINE offene Aufgabe.\nDu darfst NIEMALS eine Aktion aus dem Verlauf wiederholen, nur weil sie dort steht. Werte aus fruehreren Nachrichten (z.B. ein deal_name, ein Kontaktname) duerfen NUR uebernommen werden, wenn die AKTUELLE NACHRICHT sich klar darauf bezieht.\nWenn die AKTUELLE NACHRICHT eine neue, eigenstaendige Absicht hat, klassifiziere GENAU DIESE - voellig unabhaengig davon, worum es im Verlauf ging.\nWenn die aktuelle Nachricht kurz oder mehrdeutig ist, waehle NICHT einfach den Intent der letzten Aktion aus dem Verlauf. Lies die aktuelle Nachricht woertlich und klassifiziere nur sie. Beispiel: Wenn der Verlauf um Deals ging und die aktuelle Nachricht \"schalt das Briefing aus\" lautet, ist der Intent toggle_briefing - NICHT create_hubspot_deal.\nAKTUELLE NACHRICHT DES NUTZERS, JETZT ZU VERARBEITEN (dies ist die einzige Nachricht, die du klassifizieren und beantworten sollst): \"${userMessage}\"\nWICHTIG: Antworte AUSSCHLIESSLICH mit einem gueltigen JSON-Objekt, keine Erklaerung davor/danach.\nAntworte IMMER nur mit GENAU EINEM JSON-Objekt fuer die AKTUELLE NACHRICHT DES NUTZERS oben.\nErkenne die Absicht des Nutzers und waehle den passenden intent:\n1. \"save_memory\" — Nutzer will sich etwas merken/notieren (Task, Deal, Erinnerung)\n   Format: {\"intent\":\"save_memory\",\"type\":\"task|deal|reminder|note\",\"content\":\"...\",\"due_date\":\"YYYY-MM-DD oder null\",\"reply\":\"kurze Bestaetigung\"}\n2. \"query_memory\" — Nutzer fragt nach offenen Eintraegen, Status, was steht an\n   Format: {\"intent\":\"query_memory\",\"reply\":\"liste die relevanten Eintraege aus OFFENE EINTRAEGE auf, oder sag dass nichts offen ist\"}\n3. \"update_memory\" — Nutzer sagt etwas ist erledigt/abgeschlossen/erinnere nicht mehr\n   Format: {\"intent\":\"update_memory\",\"memory_id\":\"die id aus OFFENE EINTRAEGE die gemeint ist\",\"new_status\":\"done\",\"reply\":\"kurze Bestaetigung\"}\n4. \"create_event\" — Nutzer will einen Termin/Kalendereintrag erstellen\n   Extrahiere Datum als ISO (YYYY-MM-DD), nutze Heutiges Datum als Referenz fuer relative Angaben (morgen, uebermorgen, Wochentage).\n   Format: {\"intent\":\"create_event\",\"calendar_text\":\"YYYY-MM-DD [uhrzeit] Uhr [titel]\",\"reply\":\"kurze Bestaetigung\"}\n   Beispiel: Nutzer sagt \"Termin morgen 14 Uhr Friseur\" und heute ist 2026-06-19\n   -> calendar_text: \"2026-06-20 14 Uhr Friseur\"\n5. \"query_email\" — Nutzer fragt nach Mails, Postfach, was im Posteingang los ist\n   Wenn der Nutzer nach einer SPEZIFISCHEN Mail sucht (Absender, Betreff-Stichwort, Inhalt) und das nicht sicher aus AKTUELLE EMAIL-UPDATES beantwortbar ist, setze search_term (Stichwort/Absender/Betreff).\n   Wenn der Nutzer nur allgemein nach Status/Uebersicht/letzten Updates fragt, lass search_term weg - dann wird der 24h-Cache genutzt.\n   Format ohne Suche: {\"intent\":\"query_email\",\"reply\":\"fasse AKTUELLE EMAIL-UPDATES zusammen - Kategorie, worum es geht, ob Entwurf erstellt wurde. Wenn leer, sag dass es seit der letzten Pruefung keine neuen wichtigen Mails gab.\"}\n   Format mit Suche: {\"intent\":\"query_email\",\"search_term\":\"Stichwort/Absender/Betreff\",\"reply\":null}\n6. \"query_calendar\" — Nutzer fragt nach Terminen, Kalenderstatus, was heute/diese Woche anliegt\n   Erkenne den gemeinten Zeitraum: \"today\" fuer heute/jetzt-Anfragen, \"week\" fuer diese Woche/naechste Tage.\n   reply bleibt null - die finale Antwort wird erst nach Abruf der echten Kalenderdaten formuliert.\n   Format: {\"intent\":\"query_calendar\",\"range\":\"today|week\",\"reply\":null}\n7. \"modify_event\" — Nutzer will einen bestehenden Termin verschieben oder loeschen\n   WICHTIG: Sende IMMER den intent \"modify_event\" mit search_term, auch wenn dir unklar ist welcher konkrete Termin gemeint ist, ob es mehrere passende Termine geben koennte, oder welche neue Uhrzeit/Datum gemeint ist (new_start dann einfach null lassen). Frage NICHT selbst in \"reply\" nach welcher Termin gemeint ist oder auf welche Uhrzeit verschoben werden soll - das uebernimmt das System anhand der echten Kalenderdaten und fragt bei Bedarf selbst nach. Nutze intent \"chat\" fuer Rueckfragen nur wenn komplett unklar ist, ob ueberhaupt ein Termin verschoben/geloescht werden soll.\n   Wenn OFFENE AUSWAHL nicht leer ist UND die Aktion dort \"Verschieben\" oder \"Loeschen\" ist UND der Nutzer einen der gelisteten Kandidaten eindeutig benennt (z.B. per Uhrzeit, Nummer \"den ersten/zweiten\", Zusatzdetail) - das ist eine Praezisierung dieser Auswahl. Antworte dann mit dem passenden event_id aus der Liste.\n   Format bei Praezisierung einer Auswahl: {\"intent\":\"modify_event\",\"selected_event_id\":\"event_id aus OFFENE AUSWAHL\",\"disambiguation_id\":\"disambiguation_id aus OFFENE AUSWAHL\",\"reply\":null}\n   WICHTIG bei Praezisierung per Uhrzeit: Wenn die vom Nutzer genannte Zeit exakt der Startzeit eines Kandidaten in OFFENE AUSWAHL entspricht (z.B. \"der um 13 Uhr\" und ein Kandidat startet um 13:00 Uhr), ist das eine Identifikation WELCHER Termin gemeint ist, NICHT die neue Zielzeit. new_start bleibt in diesem Fall null - das System fragt danach selbst nach der gewuenschten Zielzeit.\n   Wenn OFFENE AUSWAHL genau EINEN Kandidaten zeigt (Aktion Verschieben/Loeschen) UND der Nutzer eine Uhrzeit/Datum nennt - das ist die fehlende Zielzeit fuer den bereits gewaehlten Termin. Antworte dann mit: {\"intent\":\"modify_event\",\"selected_event_id\":\"event_id dieses einen Kandidaten\",\"disambiguation_id\":\"disambiguation_id\",\"new_start\":\"YYYY-MM-DD HH:MM\",\"reply\":null}\n   Wenn OFFENE BESTAETIGUNG nicht leer ist UND der Nutzer zustimmt (ja, passt, mach, genau, korrekt, etc.)\n   oder ablehnt (nein, doch nicht, abbrechen, stopp) - das ist eine Bestaetigung/Ablehnung dieser Aktion.\n   Format bei neuer Anfrage (kein pending/keine auswahl vorhanden): {\"intent\":\"modify_event\",\"action\":\"move|delete\",\"search_term\":\"Stichwort aus der Nachricht\",\"new_start\":\"YYYY-MM-DD HH:MM oder null\",\"reply\":null}\n   Format bei Bestaetigung: {\"intent\":\"modify_event\",\"confirm\":true,\"pending_id\":\"id aus OFFENE BESTAETIGUNG\",\"reply\":null}\n   Format bei Ablehnung: {\"intent\":\"modify_event\",\"confirm\":false,\"pending_id\":\"id aus OFFENE BESTAETIGUNG\",\"reply\":\"Alles klar, abgebrochen.\"}\n8. \"query_hubspot\" — Nutzer fragt nach einem Deal oder Kontakt in HubSpot (z.B. \"wie steht's mit Deal X\", \"ist Kontakt Y schon in HubSpot\", \"welche Deals laufen gerade\")\n   Setze search_term mit dem Stichwort (Firmenname, Personenname, Deal-Name).\n   reply bleibt null - die finale Antwort wird erst nach Abruf der echten HubSpot-Daten formuliert.\n   Format: {\"intent\":\"query_hubspot\",\"search_term\":\"Stichwort\",\"reply\":null}\n9. \"add_hubspot_note\" — Nutzer will eine Notiz zu einem Deal oder Kontakt in HubSpot hinzufuegen/vermerken\n   (z.B. \"Notiz an Mueller: hat noch Bedenken wegen Preis\", \"vermerk beim Deal XY: Ruckruf naechste Woche\", \"trag bei Kontakt Z ein dass er Bedenkzeit braucht\")\n   Setze search_term (Name von Deal/Kontakt/Firma) und note_text (der eigentliche Inhalt der Notiz, ohne den Namen/Suchbegriff).\n   Das ist additiv - KEINE Bestaetigung noetig, reply bleibt null, die finale Antwort kommt erst nach dem Schreiben der Notiz.\n   Wenn OFFENE AUSWAHL nicht leer ist UND die Aktion dort \"HubSpot-Notiz hinzufuegen\" ist UND der Nutzer einen der gelisteten Kandidaten eindeutig benennt (per Name, Nummer \"den ersten/zweiten\", Typ Deal/Kontakt) - das ist eine Praezisierung dieser Auswahl.\n   Format bei neuer Anfrage: {\"intent\":\"add_hubspot_note\",\"search_term\":\"Stichwort\",\"note_text\":\"Inhalt der Notiz\",\"reply\":null}\n   Format bei Praezisierung einer Auswahl: {\"intent\":\"add_hubspot_note\",\"selected_hubspot_id\":\"hubspot_id aus OFFENE AUSWAHL\",\"disambiguation_id\":\"disambiguation_id aus OFFENE AUSWAHL\",\"reply\":null}\n10. \"update_deal_stage\" — Nutzer will die Stage/Status eines bestehenden Deals aendern\n   (z.B. \"setz Deal Mueller auf Angebot gemacht\", \"Deal XY ist jetzt Closed Won\")\n   Gueltige Stages (nutze EXAKT diese Bezeichnungen): Neu/Lead, Kontaktiert, Termin Gebucht, Angebot gemacht, Contract Sent, Closed Won, Closed Lost\n   Setze search_term (Deal-Name/Stichwort) und deal_stage (einer der gueltigen Werte oben).\n   WICHTIG: Das ist eine zustandsveraendernde Aktion - IMMER erst Bestaetigung einholen, NIE direkt schreiben.\n   Wenn OFFENE AUSWAHL nicht leer ist UND die Aktion dort \"Deal-Stage aendern\" ist UND der Nutzer einen Kandidaten benennt - das ist eine Praezisierung dieser Auswahl.\n   Wenn OFFENE HUBSPOT-BESTAETIGUNG nicht leer ist UND der Nutzer zustimmt (ja, passt, mach, genau) oder ablehnt (nein, abbrechen, stopp) - das ist eine Bestaetigung/Ablehnung.\n   Format bei neuer Anfrage: {\"intent\":\"update_deal_stage\",\"search_term\":\"Stichwort\",\"deal_stage\":\"einer der gueltigen Werte\",\"reply\":null}\n   Format bei Praezisierung einer Auswahl: {\"intent\":\"update_deal_stage\",\"selected_hubspot_id\":\"hubspot_id aus OFFENE AUSWAHL\",\"disambiguation_id\":\"disambiguation_id aus OFFENE AUSWAHL\",\"reply\":null}\n   Format bei Bestaetigung: {\"intent\":\"update_deal_stage\",\"confirm\":true,\"pending_hubspot_id\":\"id aus OFFENE HUBSPOT-BESTAETIGUNG\",\"reply\":null}\n   Format bei Ablehnung: {\"intent\":\"update_deal_stage\",\"confirm\":false,\"pending_hubspot_id\":\"id aus OFFENE HUBSPOT-BESTAETIGUNG\",\"reply\":\"Alles klar, abgebrochen.\"}\n11. \"create_hubspot_contact\" — Nutzer will einen NEUEN Kontakt in HubSpot anlegen\n   (z.B. \"leg Kontakt Max Mustermann an, Mail max@example.com\", \"stell den Kontakt rein\", \"Mail ist X, Name ist Y, stell den rein\")\n   Erfordert: contact_email (Pflicht). Optional: contact_name, contact_company, contact_phone.\n   Wenn contact_email fehlt, nutze intent \"chat\" und frag gezielt nach der Email-Adresse.\n   Das ist additiv - KEINE Bestaetigung noetig, reply bleibt null, finale Antwort kommt erst nach dem Anlegen.\n   Format: {\"intent\":\"create_hubspot_contact\",\"contact_name\":\"Vorname Nachname oder null\",\"contact_email\":\"...\",\"contact_company\":\"... oder null\",\"contact_phone\":\"... oder null\",\"reply\":null}\n12. \"create_hubspot_deal\" — Nutzer will einen NEUEN Deal in HubSpot anlegen\n   (z.B. \"leg Deal Mueller GmbH an\", \"neuer Deal: Projekt X, Stage Kontaktiert\")\n   Erfordert: deal_name (Pflicht). Optional: deal_contact_email (verknuepft den Deal mit einem bestehenden Kontakt), deal_stage (gueltige Werte siehe oben bei update_deal_stage, default \"Neu/Lead\" wenn nicht genannt).\n   WICHTIG: Wenn kurz zuvor in der Konversation ein Kontakt mit einer Email-Adresse genannt oder angelegt wurde und der Nutzer jetzt einen Deal anlegen will ohne erneut eine Email zu nennen, uebernimm automatisch diese Email als deal_contact_email - frag NICHT erneut danach. Nur wenn ueberhaupt kein Kontaktbezug im bisherigen Gespraech erkennbar ist, lass deal_contact_email leer.\n   Wenn deal_name fehlt, nutze intent \"chat\" und frag gezielt nach.\n   Das ist additiv - KEINE Bestaetigung noetig, reply bleibt null, finale Antwort kommt erst nach dem Anlegen.\n   Format: {\"intent\":\"create_hubspot_deal\",\"deal_name\":\"...\",\"deal_contact_email\":\"... oder null\",\"deal_stage\":\"... oder null\",\"reply\":null}\n13. \"chat\" — alles andere (Smalltalk, allgemeine Fragen, Unklares)\n   Format: {\"intent\":\"chat\",\"reply\":\"deine Antwort\"}\n14. \"toggle_briefing\" — Nutzer will das taegliche Morgen-Briefing ein- oder ausschalten\n   (z.B. \"schalt das Briefing aus\", \"ich will kein Morgen-Briefing mehr\", \"aktivier das Briefing wieder\", \"Briefing wieder an\", \"Morgen-Briefing an/aus\")\n   Format: {\"intent\":\"toggle_briefing\",\"briefing_aktiv\":true oder false,\"reply\":null}\n15. \"remember_lead\" — Nutzer will sich einen neuen Lead/Kontakt merken oder Notizen zu einem bestehenden Lead ergaenzen\n   (ausserhalb von HubSpot, z.B. \"merk dir Herrn Mueller von Firma X, hat Interesse an Y\", \"notier bei Lead Mueller: will naechste Woche zurueckgerufen werden\")\n   Gleiche GESPEICHERTE LEADS ab (auch bei leicht abweichender Schreibweise) um zu erkennen ob der Lead schon existiert — Ergaenzungen werden automatisch an bestehende Notizen angehaengt.\n   Format: {\"intent\":\"remember_lead\",\"lead_name\":\"...\",\"lead_company\":\"... oder null\",\"lead_contact_info\":\"... oder null\",\"lead_notes\":\"... oder null\",\"reply\":\"deine Bestaetigung, z.B. \\\\\"Alles klar, hab mir Herrn Mueller notiert.\\\\\"\"}\n16. \"list_leads\" — Nutzer will gespeicherte Leads sehen: neu, gefiltert, oder als Fortsetzung einer vorherigen Liste.\n   (z.B. \"zeig mir alle Leads\", \"zeig mir Leads von Firma X\", \"hab ich einen Lead namens Mueller\", \"zeig mir mehr\", \"die naechsten\", \"weiter\")\n   Setze list_leads_continue:true NUR wenn der Nutzer erkennbar an der VORHERIGEN Liste weiterblaettern will (z.B. \"zeig mir mehr\", \"weiter\", \"die naechsten\").\n   Sonst false (= neue/frische Anfrage). lead_search nur bei list_leads_continue:false relevant (wird bei true ignoriert, die vorherige Suche wird automatisch fortgesetzt).\n   Format: {\"intent\":\"list_leads\",\"lead_search\":\"Suchbegriff oder null\",\"list_leads_continue\":true oder false,\"reply\":null}\n17. \"toggle_feature\" — Nutzer will eines oder mehrere der proaktiven Features ein- oder ausschalten: Follow-Up Guard (stale Deals/Leads),\n   Weekly Review (woechentliche Zusammenfassung), Pre-Meeting Snapshot (Kontext vor externen Meetings) oder Abend-Recap (taegliche Tagesfrage).\n   (z.B. \"schalt Follow-Up Guard ein\", \"Weekly Review aus\", \"Pre-Meeting Snapshot an\", \"Abend-Recap an/aus\", \"aktiviere Weekly Review und Abend-Recap\")\n   WICHTIG: NUR bei eindeutigem Befehl waehlen. Reine Fragen nach Features (\"welche Features hast du\", \"was ist aktiv\", \"was kannst du proaktiv\") sind KEIN toggle_feature, sondern \"chat\" — niemals feature_aktiv raten oder ein Feature aendern ohne klaren An/Aus-Befehl.\n   Nennt der Nutzer MEHRERE Features im selben Befehl (z.B. \"aktiviere Weekly Review und Abend-Recap\", \"alle proaktiven Features an\"), liste ALLE gemeinten als kommagetrennte Liste in feature_name (z.B. \"weekly_review,abend_recap\" oder bei \"alle\": \"follow_up_guard,weekly_review,premeeting_snapshot,abend_recap\"). EIN feature_aktiv gilt fuer alle genannten Features im selben Befehl — bei gemischten An/Aus-Wuenschen im selben Satz nur den zuerst genannten Zustand nehmen, Rest ignorieren (Nutzer kann den Rest per Folgenachricht senden).\n   feature_name muss aus GENAU diesen Werten bestehen (einzeln oder kommagetrennt): \"follow_up_guard\", \"weekly_review\", \"premeeting_snapshot\", \"abend_recap\".\n   Format: {\"intent\":\"toggle_feature\",\"feature_name\":\"...\",\"feature_aktiv\":true oder false,\"reply\":null}\n18. \"delete_lead\" — Nutzer will einen gespeicherten Lead loeschen (unwiderruflich!).\n   Wenn OFFENE LOESCH-BESTAETIGUNG einen Lead zeigt UND die aktuelle Nachricht klar zustimmt (ja/bestaetigen/loeschen) -> delete_confirm:true.\n   Wenn OFFENE LOESCH-BESTAETIGUNG einen Lead zeigt UND die aktuelle Nachricht klar ablehnt (nein/abbrechen/stopp) -> delete_confirm:false.\n   Sonst (neue Loeschanfrage, z.B. \"loesch Lead Mueller\") -> delete_confirm:null, lead_name aus der Nachricht extrahieren.\n   Format: {\"intent\":\"delete_lead\",\"lead_name\":\"... oder null\",\"delete_confirm\":true, false oder null,\"reply\":null}\nWaehle memory_id nur aus den IDs die in OFFENE EINTRAEGE aufgelistet sind. Waehle pending_id nur aus den IDs die in OFFENE BESTAETIGUNG aufgelistet sind. Waehle pending_hubspot_id nur aus den IDs die in OFFENE HUBSPOT-BESTAETIGUNG aufgelistet sind. Waehle event_id, hubspot_id und disambiguation_id nur aus den Werten die in OFFENE AUSWAHL aufgelistet sind. Wenn unklar welcher Eintrag gemeint ist, nutze intent \"chat\" und frag nach.`;\n\nreturn [{ json: {\n  systemPrompt,\n  userMessage,\n  maxTokens: '500'\n} }];\n"
+      },
+      "id": "66109c03-5a4e-4743-9d1e-5bf725c28c14",
+      "name": "Test SystemPrompt bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "={{ $json.userMessage }}",
+            "maxTokens": "={{ $json.maxTokens }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "fb855e98-766b-4846-ae13-43189e6e8147",
+      "name": "LLM Call",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Bracket-sicheres JSON-Parsing mit Fallback -- gleiches Muster wie\n// 'Intent Parser' / 'Claude Output parsen' im Hauptworkflow bzw. Email Triage.\n\nconst raw = $json.text || '';\n\nfunction extractJson(str) {\n  const start = str.indexOf('{');\n  const end = str.lastIndexOf('}');\n  if (start === -1 || end === -1 || end < start) return null;\n  return str.slice(start, end + 1);\n}\n\nlet intent = null;\nlet parseError = null;\n\ntry {\n  const jsonStr = extractJson(raw);\n  if (!jsonStr) throw new Error('Kein JSON-Objekt in der LLM-Antwort gefunden');\n  const parsed = JSON.parse(jsonStr);\n  intent = parsed.intent || null;\n} catch (e) {\n  parseError = e.message;\n}\n\nreturn [{ json: { intent, parseError, raw } }];"
+      },
+      "id": "98d55038-ca06-46e2-b3d9-752ddeeb5af7",
+      "name": "Intent Parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "1b2bf989-a5b8-41e1-a3fa-2b8782acf4fc",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'unauthorized' }) }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "93006ba8-4600-4042-94ce-4775ad204daf",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        208
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Auth Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Check": {
+      "main": [
+        [
+          {
+            "node": "Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Test SystemPrompt bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test SystemPrompt bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call": {
+      "main": [
+        [
+          {
+            "node": "Intent Parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Parsen": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

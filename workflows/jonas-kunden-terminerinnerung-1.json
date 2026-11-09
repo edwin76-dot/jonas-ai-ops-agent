@@ -1,0 +1,600 @@
+{
+  "id": "hCii6kS8DxV6ozZL",
+  "name": "Jonas Kunden-Terminerinnerung 1",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        416
+      ],
+      "id": "ddb6fc21-0119-4739-ac2c-5dfafe9ef28b",
+      "name": "Erinnerung Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_terminerinnerung_lock\nSET running = false\nWHERE id = 1 AND running = true AND started_at < NOW() - INTERVAL '15 minutes';\n\nSELECT running FROM jonas_terminerinnerung_lock WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        416
+      ],
+      "id": "7701bf0c-6c93-4700-9589-dcd3c18a5a0d",
+      "name": "Lock prüfen (Erinnerung)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "22a05eb2-5fc5-4c5c-aec8-1337e4147248",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        416
+      ],
+      "id": "4c4a9b5d-2db6-4e8a-a93e-a2a2115c1352",
+      "name": "Läuft schon? (Erinnerung)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_terminerinnerung_lock SET running = true, started_at = NOW() WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        416
+      ],
+      "id": "62520644-7a1e-46f6-ae73-eabd0eaafe51",
+      "name": "Lock setzen (Erinnerung)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id\nWHERE t.status = 'active' AND tc.provider = 'outlook'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        416
+      ],
+      "id": "e666d9de-7b0a-47f3-a6c6-60e9e4102750",
+      "name": "Aktive Tenants laden (Erinnerung)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        416
+      ],
+      "id": "c9ee46f4-b698-4cac-84c1-a89daface730",
+      "name": "Loop Over Tenants (Erinnerung)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $json.tenant_id }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "65cbc594-2e74-401e-ab8e-5c93104b75ac",
+      "name": "Get Valid Graph Token"
+    },
+    {
+      "parameters": {
+        "url": "={{ (() => { const now = new Date(); const berlinNow = new Date(now.toLocaleString(\"en-US\", { timeZone: \"Europe/Berlin\" })); const start = new Date(berlinNow); start.setDate(start.getDate() + 1); start.setHours(0,0,0,0); const end = new Date(start); end.setDate(end.getDate() + 1); const diffMs = now.getTime() - berlinNow.getTime(); const startUtc = new Date(start.getTime() + diffMs); const endUtc = new Date(end.getTime() + diffMs); return \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + startUtc.toISOString() + \"&endDateTime=\" + endUtc.toISOString() + \"&$select=id,subject,start,attendees\"; })() }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1568,
+        176
+      ],
+      "id": "00fb054b-045f-474d-99c7-eb5667268296",
+      "name": "Morgige Termine holen",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst events = $json.value || [];\nreturn events\n  .filter(e => (e.attendees || []).length > 0)\n  .map(e => ({\n    json: {\n      tenant_id: $('Loop Over Tenants (Erinnerung)').first().json.tenant_id,\n      telegram_chat_id: $('Loop Over Tenants (Erinnerung)').first().json.telegram_chat_id,\n      event_id: e.id,\n      subject: e.subject || 'Termin',\n      startRaw: e.start ? e.start.dateTime : null,\n      attendeeEmails: (e.attendees || []).map(a => a.emailAddress && a.emailAddress.address).filter(Boolean)\n    }\n  }))\n  .filter(e => e.attendeeEmails.length > 0);\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        176
+      ],
+      "id": "d734bddd-a776-4307-8fc9-3b745d774ac6",
+      "name": "Externe Termine filtern"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS found FROM jonas_reminder_sent\nWHERE tenant_id = '{{ $('Externe Termine filtern').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND event_id = '{{ $('Externe Termine filtern').item.json.event_id.replace(/'/g, \"''\") }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2016,
+        176
+      ],
+      "id": "724f7b45-1022-4561-97dd-932b84e78166",
+      "name": "Bereits erinnert?",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "823305c4-5c6e-4f10-b5f5-b55ddff81205",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        240
+      ],
+      "id": "8ad3f158-aaca-40c1-84db-5e396cfc982d",
+      "name": "Schon erinnert?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: { subject: \"Terminerinnerung: \" + $('Externe Termine filtern').item.json.subject, body: { contentType: \"Text\", content: \"Hallo,\\n\\nkurze Erinnerung an unseren Termin morgen (\\\"\" + $('Externe Termine filtern').item.json.subject + \"\\\").\\n\\nBeste Gruesse\" }, toRecipients: $('Externe Termine filtern').item.json.attendeeEmails.map(e => ({ emailAddress: { address: e } })) }, saveToSentItems: true }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2464,
+        240
+      ],
+      "id": "1b0c83f1-2ecd-4076-aace-6274d5b391fa",
+      "name": "Erinnerungsmail senden",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_reminder_sent (tenant_id, event_id, sent_at)\nVALUES ('{{ $('Externe Termine filtern').item.json.tenant_id.replace(/'/g, \"''\") }}', '{{ $('Externe Termine filtern').item.json.event_id.replace(/'/g, \"''\") }}', NOW())\nON CONFLICT DO NOTHING;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2688,
+        144
+      ],
+      "id": "e58842a0-b78d-4373-88f3-416ddfa5dfd5",
+      "name": "Als erinnert markieren",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Externe Termine filtern').item.json.telegram_chat_id }}",
+        "text": "={{ \"✅ Erinnerung fuer morgigen Termin \\\"\" + $('Externe Termine filtern').item.json.subject + \"\\\" verschickt.\" }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2912,
+        320
+      ],
+      "id": "953ef7e3-c3d3-4c2e-bc57-c5ed919ab36b",
+      "name": "Telegram Bestaetigung (Erinnerung)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_terminerinnerung_lock SET running = false WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        192
+      ],
+      "id": "0d5c6c8d-e477-415b-b16f-bf3e4bdfb325",
+      "name": "Lock freigeben (Erinnerung)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Externe Termine filtern').item.json.telegram_chat_id }}",
+        "text": "={{ \"⚠️ Terminerinnerung fuer \\\"\" + $('Externe Termine filtern').item.json.subject + \"\\\" konnte nicht verschickt werden (Mail-Fehler) — bitte manuell pruefen.\" }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2688,
+        432
+      ],
+      "id": "5994c819-1106-485d-adbc-f90a713aeaf3",
+      "name": "Erinnerungsmail Fehler Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Erinnerung Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lock prüfen (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock prüfen (Erinnerung)": {
+      "main": [
+        [
+          {
+            "node": "Läuft schon? (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Läuft schon? (Erinnerung)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Lock setzen (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock setzen (Erinnerung)": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden (Erinnerung)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants (Erinnerung)": {
+      "main": [
+        [
+          {
+            "node": "Lock freigeben (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Valid Graph Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Valid Graph Token": {
+      "main": [
+        [
+          {
+            "node": "Morgige Termine holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Morgige Termine holen": {
+      "main": [
+        [
+          {
+            "node": "Externe Termine filtern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Tenants (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externe Termine filtern": {
+      "main": [
+        [
+          {
+            "node": "Bereits erinnert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bereits erinnert?": {
+      "main": [
+        [
+          {
+            "node": "Schon erinnert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schon erinnert?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erinnerungsmail senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erinnerungsmail senden": {
+      "main": [
+        [
+          {
+            "node": "Als erinnert markieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erinnerungsmail Fehler Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Als erinnert markieren": {
+      "main": [
+        [
+          {
+            "node": "Telegram Bestaetigung (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Bestaetigung (Erinnerung)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erinnerungsmail Fehler Reply": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants (Erinnerung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

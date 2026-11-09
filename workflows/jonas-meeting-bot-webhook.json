@@ -1,0 +1,838 @@
+{
+  "id": "AxDXlaTAGo1USnFW",
+  "name": "Jonas Meeting Bot Webhook",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-bot-recall",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1760,
+        320
+      ],
+      "id": "47a373e9-f4ac-42bd-9006-a9eab5cdd480",
+      "name": "Recall Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cd729d09-b806-4419-8542-99208e442ae3",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "transcript.done",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1536,
+        320
+      ],
+      "id": "4ddcd701-e436-4f78-bde1-448125facb2d",
+      "name": "Ist Transcript Done?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true} }}",
+        "options": {
+          "responseCode": "200"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -1312,
+        416
+      ],
+      "id": "8eecbd86-bdca-4ef5-bbc7-220f5a65b9fa",
+      "name": "Webhook OK Reply (Ignoriert)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body;\nreturn [{ json: {\n  transcript_id: body.data?.transcript?.id || null,\n  bot_id: body.data?.bot?.id || null\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        224
+      ],
+      "id": "73213981-02de-4ce0-b9d2-cdb1d2a9535b",
+      "name": "Transcript-ID extrahieren"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT tenant_id, event_title, meeting_url, telegram_chat_id\nFROM jonas_meeting_bots\nWHERE recall_bot_id = '{{ $json.bot_id.replace(/'/g, \"''\") }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1088,
+        224
+      ],
+      "id": "0ca3f62a-80bd-4377-8d2c-e2a5bdf450d4",
+      "name": "Bot-Zuordnung laden",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9b4bcf3a-4c67-4fad-a326-2a77ed9186c5",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -864,
+        224
+      ],
+      "id": "c7f60f76-155f-4c99-b5eb-96263bcb0d13",
+      "name": "Zuordnung gefunden?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true} }}",
+        "options": {
+          "responseCode": "200"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -640,
+        384
+      ],
+      "id": "c0ba1aa3-b338-4370-baa5-28acf101fe33",
+      "name": "Webhook OK Reply (Unbekannt)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true} }}",
+        "options": {
+          "responseCode": "200"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "67851520-f274-45c3-87f7-f9cd44b84ff7",
+      "name": "Webhook OK Reply (Verarbeitung)"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $env.RECALL_API_REGION + \".recall.ai/api/v1/transcript/\" + $('Transcript-ID extrahieren').first().json.transcript_id + \"/\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Token \" + $env.RECALL_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -640,
+        192
+      ],
+      "id": "85a0bbb3-063f-4e19-8431-9d5e96f2b83d",
+      "name": "Transkript abrufen",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.download_url }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -416,
+        288
+      ],
+      "id": "9a12f6da-a6f1-4678-a4d3-e7e57bb4d06f",
+      "name": "Transkript-Datei laden",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeAll(nodeName) {\n  try { return $(nodeName).all().map(i => i.json); } catch (e) { return []; }\n}\nconst turns = $input.first().json;\nconst arr = Array.isArray(turns) ? turns : [];\nconst lines = [];\nconst participantEmails = new Set();\nfor (const turn of arr) {\n  const p = turn.participant || {};\n  const text = (turn.words || []).map(w => w.text).join(' ').trim();\n  if (!text) continue;\n  lines.push(`${p.name || 'Unbekannt'}: ${text}`);\n  if (p.email && !p.is_host) participantEmails.add(p.email);\n}\nlet full = lines.join('\\n');\nif (full.length > 12000) full = full.slice(0, 12000) + '\\n[...gekuerzt...]';\nreturn [{ json: { transcriptText: full || '(kein Transkriptinhalt gefunden)', participantEmails: [...participantEmails] } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        336
+      ],
+      "id": "720e5b7e-9b36-4412-97ad-d3c7f3d23cad",
+      "name": "Transkript zu Text",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "Du bist Jonas, ein persoenlicher AI Ops-Assistent. Fasse das folgende Meeting-Transkript praegnant auf Deutsch zusammen: Teilnehmer, Kernpunkte/Entscheidungen, offene Punkte bzw. Action Items (mit Verantwortlichen, falls aus dem Transkript erkennbar). Kein Fliesstext-Vorwort, direkt strukturiert. Wenn das Transkript zu duenn fuer eine sinnvolle Zusammenfassung ist, sag das ehrlich.",
+            "userMessage": "={{ $json.transcriptText }}",
+            "maxTokens": 800
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        336
+      ],
+      "id": "62309115-6d35-4d90-a82d-881df8e99ac2",
+      "name": "Notizen erstellen",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { text: '' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        128
+      ],
+      "id": "21c1f420-3b41-4656-a36c-76e95bbe6924",
+      "name": "Notizen Fehler (kein Transkript)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeGet(nodeName, path) {\n  try { const n = $(nodeName); if (n.first()) return path(n.first().json); } catch (e) { return undefined; }\n  return undefined;\n}\nconst notesText = $json.text || safeGet('Notizen Fehler (kein Transkript)', j => j.text) || 'Konnte keine Notizen erzeugen — leeres oder zu kurzes Transkript.';\nconst zuordnung = $('Bot-Zuordnung laden').first().json;\nconst participantEmails = safeGet('Transkript zu Text', j => j.participantEmails) || [];\nreturn [{ json: {\n  telegramText: `Meeting-Notizen — \"${zuordnung.event_title || 'Meeting'}\"\\n\\n${notesText}`,\n  hubspotNoteText: `Meeting-Notizen (automatisch von Jonas): \"${zuordnung.event_title || 'Meeting'}\"\\n\\n${notesText}`,\n  emailBody: notesText,\n  eventTitle: zuordnung.event_title || 'Meeting',\n  tenantId: zuordnung.tenant_id,\n  telegramChatId: zuordnung.telegram_chat_id,\n  participantEmails\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        192
+      ],
+      "id": "57159cb6-f6c4-4661-bb01-6c443d75d0d9",
+      "name": "Notizen aufbereiten",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegramChatId }}",
+        "text": "={{ $json.telegramText }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        32
+      ],
+      "id": "02f5a071-65e6-4118-a0bb-90b978c852e0",
+      "name": "Meeting-Notizen an Tenant senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $json.tenantId.replace(/'/g, \"''\") }}'\n  AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        224
+      ],
+      "id": "858a6051-f9aa-468e-8ae8-9d076b87a660",
+      "name": "HubSpot Token laden (Meeting)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cb81a5f6-6fea-4852-bf8f-140a5180fd55",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        704,
+        224
+      ],
+      "id": "3a458a60-37df-442c-9152-ebb154d7f2e3",
+      "name": "HubSpot Token OK? (Meeting)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Meeting)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: (($('Notizen aufbereiten').first().json.participantEmails) || []).map(email => ({ filters: [{ propertyName: 'email', operator: 'EQ', value: email }] })),\n  properties: [],\n  limit: 1\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        928,
+        224
+      ],
+      "id": "bdd214cf-f632-48d0-95c4-d4cf674321b7",
+      "name": "HubSpot Kontakt suchen (Meeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = (($json.results) || []).filter(r => r && r.id);\nreturn [{ json: { contactId: results.length ? results[0].id : null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        224
+      ],
+      "id": "363854c3-e639-4efb-b6e0-3f39500dcce9",
+      "name": "HubSpot Kontakt entpacken (Meeting)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Meeting)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_note_body: $('Notizen aufbereiten').first().json.hubspotNoteText,\n    hs_timestamp: $now.toISO()\n  },\n  associations: $json.contactId ? [{\n    to: { id: $json.contactId },\n    types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }]\n  }] : []\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1376,
+        224
+      ],
+      "id": "26611800-ff7a-4caa-9f8c-53c4946023fe",
+      "name": "HubSpot Notiz erstellen (Meeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $json.tenantId }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        416
+      ],
+      "id": "80de7e5a-9537-4c13-a73b-5c5a9c167d32",
+      "name": "Graph Token (Meeting Mail)",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9d31d898-cef5-4d46-ac80-4a1b4c95f8a8",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        704,
+        416
+      ],
+      "id": "1b41692c-fb10-4b40-9c04-9cde50ec0aac",
+      "name": "Meeting Mail Token OK?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "81ef68a4-bf86-4942-afd5-bcec6d3c9aab",
+              "leftValue": "={{ ($('Notizen aufbereiten').first().json.participantEmails || []).length > 0 }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        928,
+        416
+      ],
+      "id": "3d7226e5-c4b3-44f5-9b01-e2ca0b9f3232",
+      "name": "Externer Teilnehmer vorhanden?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Graph Token (Meeting Mail)').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  subject: 'Notizen zu unserem Gespraech: ' + $('Notizen aufbereiten').first().json.eventTitle,\n  body: { contentType: 'Text', content: $('Notizen aufbereiten').first().json.emailBody },\n  toRecipients: ($('Notizen aufbereiten').first().json.participantEmails || [])\n    .map(email => ({ emailAddress: { address: email } }))\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        416
+      ],
+      "id": "52dd967d-c5e6-4c55-b45f-84420b7008fb",
+      "name": "Outlook Entwurf erstellen (Meeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Recall Webhook": {
+      "main": [
+        [
+          {
+            "node": "Ist Transcript Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ist Transcript Done?": {
+      "main": [
+        [
+          {
+            "node": "Transcript-ID extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Webhook OK Reply (Ignoriert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript-ID extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Bot-Zuordnung laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot-Zuordnung laden": {
+      "main": [
+        [
+          {
+            "node": "Zuordnung gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zuordnung gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Webhook OK Reply (Verarbeitung)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Transkript abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Webhook OK Reply (Unbekannt)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transkript abrufen": {
+      "main": [
+        [
+          {
+            "node": "Transkript-Datei laden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notizen Fehler (kein Transkript)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transkript-Datei laden": {
+      "main": [
+        [
+          {
+            "node": "Transkript zu Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notizen Fehler (kein Transkript)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transkript zu Text": {
+      "main": [
+        [
+          {
+            "node": "Notizen erstellen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notizen Fehler (kein Transkript)": {
+      "main": [
+        [
+          {
+            "node": "Notizen aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notizen erstellen": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Notizen aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notizen aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Meeting-Notizen an Tenant senden",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HubSpot Token laden (Meeting)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Graph Token (Meeting Mail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token OK? (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt suchen (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt entpacken (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Kontakt entpacken (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token OK? (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt suchen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt entpacken (Meeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Notiz erstellen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (Meeting Mail)": {
+      "main": [
+        [
+          {
+            "node": "Meeting Mail Token OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting Mail Token OK?": {
+      "main": [
+        [
+          {
+            "node": "Externer Teilnehmer vorhanden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externer Teilnehmer vorhanden?": {
+      "main": [
+        [
+          {
+            "node": "Outlook Entwurf erstellen (Meeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

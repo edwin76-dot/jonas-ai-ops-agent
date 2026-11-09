@@ -1,0 +1,377 @@
+{
+  "id": "qTshTA8Xy9kFBrPj",
+  "name": "LLM Call v6",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "systemPrompt"
+            },
+            {
+              "name": "userMessage"
+            },
+            {
+              "name": "maxTokens"
+            },
+            {
+              "name": "imageBase64"
+            },
+            {
+              "name": "imageMediaType"
+            },
+            {
+              "name": "imagesBase64"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -608,
+        1680
+      ],
+      "id": "2aa7a43e-8396-4ffc-8c22-d553e3b4ba5e",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS config FROM system_config",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -384,
+        1680
+      ],
+      "id": "abb9f02d-0d16-4133-a707-71248eb1ee30",
+      "name": "Config laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.config.llm_provider }}",
+                    "rightValue": "anthropic",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3a7c380d-32c8-4b02-ba2a-9819ce3654c3"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "anthropic"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1540be10-d08e-4432-9668-9d1f8fbfe112",
+                    "leftValue": "={{ $json.config.llm_provider }}",
+                    "rightValue": "mistral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        64,
+        1664
+      ],
+      "id": "8c6afecf-ed2b-424c-9eb8-a9b1259bda71",
+      "name": "Provider Switch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Anthropic Body bauen').item.json.anthropicBody }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        1488
+      ],
+      "id": "e2b62009-a585-4bb0-9e90-af34e72f79b7",
+      "name": "Claude API Call",
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalisieren (Anthropic)\nif ($json.error) {\n  return { json: { text: '', error: $json.error?.message || 'LLM-Call fehlgeschlagen' } };\n}\nconst text = $json.content?.[0]?.text || '';\nreturn { json: { text } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        1488
+      ],
+      "id": "386f643e-8cf0-45b6-923c-0e45bca2022a",
+      "name": "Normalisieren (Anthropic)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Mistral Body bauen').item.json.mistralBody }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        512,
+        1680
+      ],
+      "id": "e2a3c9ec-8df1-4f60-8540-578661b8c2f6",
+      "name": "Mistral API Call",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Mistral API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalisieren (Mistral)\nif ($json.error) {\n  return { json: { text: '', error: $json.error?.message || 'LLM-Call fehlgeschlagen' } };\n}\nconst text = $json.choices?.[0]?.message?.content || '';\nreturn { json: { text } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        1680
+      ],
+      "id": "ea9609de-c7a8-45e1-a6c3-2f3dc11d1769",
+      "name": "Normalisieren (Mistral)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const trigger = $('When Executed by Another Workflow').item.json;\nconst config = $json.config;\nconst maxTokens = Number(trigger.maxTokens) || 400;\n\n\n\nlet imagesBase64 = trigger.imagesBase64;\nif (typeof imagesBase64 === 'string') {\n  try { imagesBase64 = JSON.parse(imagesBase64); } catch (e) { imagesBase64 = null; }\n}\n\nlet userContent;\nif (Array.isArray(imagesBase64) && imagesBase64.length > 0) {\n  // NEU: Mehrbild-Support (Media-Group/Album) -- ein Bild-Block pro Foto,\n  // Reihenfolge wie im Array, Text-Block ans Ende. Bestehende Single-Image-\n  // Aufrufe (imageBase64 singular) bleiben unveraendert im else-Zweig.\n  userContent = imagesBase64.map(img => ({\n    type: \"image\",\n    source: {\n      type: \"base64\",\n      media_type: img.mediaType || \"image/jpeg\",\n      data: img.data\n    }\n  }));\n  userContent.push({ type: \"text\", text: trigger.userMessage });\n} else if (trigger.imageBase64) {\n  userContent = [\n    {\n      type: \"image\",\n      source: {\n        type: \"base64\",\n        media_type: trigger.imageMediaType || \"image/jpeg\",\n        data: trigger.imageBase64\n      }\n    },\n    {\n      type: \"text\",\n      text: trigger.userMessage\n    }\n  ];\n} else {\n  userContent = trigger.userMessage;\n}\n\nconst anthropicBody = {\n  model: config.llm_model_anthropic,\n  max_tokens: maxTokens,\n  system: trigger.systemPrompt,\n  messages: [{ role: \"user\", content: userContent }]\n};\n\nreturn { json: { anthropicBody: JSON.stringify(anthropicBody), config } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        1680
+      ],
+      "id": "b2e047eb-2945-4a08-9ba2-43943fd01189",
+      "name": "Anthropic Body bauen"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const trigger = $('When Executed by Another Workflow').item.json;\nconst config = $json.config;\nconst maxTokens = Number(trigger.maxTokens) || 600;\n\n// Gepinnt statt ueber system_config.llm_model_mistral ('latest') geladen --\n// verhindert, dass Mistral das Modell hinter dem Alias irgendwann austauscht\n// und Vision-Calls lautlos brechen.\nconst MISTRAL_MODEL = 'mistral-small-2506';\n\nlet imagesBase64 = trigger.imagesBase64;\nif (typeof imagesBase64 === 'string') {\n  try { imagesBase64 = JSON.parse(imagesBase64); } catch (e) { imagesBase64 = null; }\n}\n\nlet userContent;\nif (Array.isArray(imagesBase64) && imagesBase64.length > 0) {\n  // NEU: Mehrbild-Support, analog Anthropic Body bauen.\n  userContent = imagesBase64.map(img => ({\n    type: \"image_url\",\n    image_url: `data:${img.mediaType || 'image/jpeg'};base64,${img.data}`\n  }));\n  userContent.push({ type: \"text\", text: trigger.userMessage });\n} else if (trigger.imageBase64) {\n  userContent = [\n    { type: \"image_url\", image_url: `data:${trigger.imageMediaType || 'image/jpeg'};base64,${trigger.imageBase64}` },\n    { type: \"text\", text: trigger.userMessage }\n  ];\n} else {\n  userContent = trigger.userMessage;\n}\n\nconst mistralBody = {\n  model: MISTRAL_MODEL,\n  max_tokens: maxTokens,\n  messages: [\n    { role: \"system\", content: trigger.systemPrompt },\n    { role: \"user\", content: userContent }\n  ]\n};\n\nreturn { json: { mistralBody: JSON.stringify(mistralBody), config } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        1680
+      ],
+      "id": "7747fe17-e1bd-422e-9bc1-25aef3619073",
+      "name": "Mistral Body bauen"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Config laden').first().json.config;\nthrow new Error('Unbekannter llm_provider in system_config: ' + JSON.stringify(config?.llm_provider));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        1872
+      ],
+      "id": "99d8e172-7d97-4f06-8f09-1f4c246a4b68",
+      "name": "Provider Switch Fallback Fehler"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Config laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config laden": {
+      "main": [
+        [
+          {
+            "node": "Anthropic Body bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider Switch": {
+      "main": [
+        [
+          {
+            "node": "Claude API Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral Body bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Provider Switch Fallback Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude API Call": {
+      "main": [
+        [
+          {
+            "node": "Normalisieren (Anthropic)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalisieren (Anthropic)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral API Call": {
+      "main": [
+        [
+          {
+            "node": "Normalisieren (Mistral)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalisieren (Mistral)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Body bauen": {
+      "main": [
+        [
+          {
+            "node": "Provider Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Body bauen": {
+      "main": [
+        [
+          {
+            "node": "Mistral API Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

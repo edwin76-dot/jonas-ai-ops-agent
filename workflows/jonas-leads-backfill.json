@@ -1,0 +1,324 @@
+{
+  "id": "qwkRUcJASdtniRv3",
+  "name": "Jonas Leads Backfill",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        160
+      ],
+      "id": "5aaf13b7-aa6c-4bb6-afd6-5e0a8782fcdb",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, tenant_id, name, company, notes\nFROM jonas_leads\nWHERE priority IS NULL\n  AND notes IS NOT NULL AND notes <> ''\nORDER BY created_at ASC",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -448,
+        160
+      ],
+      "id": "8080f3a1-dfdf-4107-8daf-537543270319",
+      "name": "Leads ohne Bewertung laden",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        160
+      ],
+      "id": "bb8bd8cd-3253-4ea3-b15d-8b769f27c7f4",
+      "name": "Loop Over Items (Backfill)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c52179cb-d521-4c64-af69-3afaed4c85d6",
+      "name": "Backfill abgeschlossen"
+    },
+    {
+      "parameters": {
+        "jsCode": "const l = $json;\nconst systemPrompt = `Du schaetzt fuer einen bestehenden Lead/Kontakt anhand vorhandener Notizen nachtraeglich eine Prioritaet und ein Follow-up-Zeitfenster. Kein Bild verfuegbar, nur Text -- schaetze konservativ, bei Unklarheit lieber C statt A/B.\\n\\nKontakt: ${l.name}${l.company ? ' (' + l.company + ')' : ''}\\nNotizen: ${l.notes}\\n\\nPrioritaet A/B/C/D:\\n- A = hoher strategischer Hebel, schnell und aktiv, 1-3 Tage\\n- B = solider relevanter Kontakt, 3-10 Tage\\n- C = unklar oder spaeter relevant, 2-6 Wochen (14-42 Tage)\\n- D = derzeit keine Prioritaet, kein aktiver Follow-up\\n\\nAntworte NUR mit einem einzeiligen JSON-Objekt, keine Erklaerung drumherum: {\"priority\":\"A/B/C/D\",\"followup_days\":Zahl in Tagen passend zur Prioritaet, bei D immer null}`;\nreturn [{ json: { systemPrompt, tenant_id: l.tenant_id, lead_id: l.id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        240
+      ],
+      "id": "45b95529-6770-4030-83b1-6753f5b54a90",
+      "name": "Backfill Prompt bauen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "Schaetze Prioritaet und Follow-up-Fenster fuer diesen Lead.",
+            "maxTokens": "80"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        224,
+        160
+      ],
+      "id": "0bbf182c-f9ff-408d-8569-7fecbefaf596",
+      "name": "LLM Call (Backfill)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const leadId = $('Backfill Prompt bauen').first().json.lead_id;\nconst raw = $json.text || '';\nlet priority = null, followupDays = null;\ntry {\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  if (start !== -1 && end !== -1) {\n    const parsed = JSON.parse(raw.slice(start, end + 1));\n    priority = ['A','B','C','D'].includes(parsed.priority) ? parsed.priority : null;\n    followupDays = typeof parsed.followup_days === 'number' ? parsed.followup_days : null;\n  }\n} catch (e) { /* priority bleibt null -> wird uebersprungen */ }\nreturn [{ json: { leadId, priority, followupDays } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        160
+      ],
+      "id": "edb4d360-2232-4b21-8a8e-52328aec3c2b",
+      "name": "Backfill Antwort parsen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "97c4a707-c33a-4dfb-bec9-688bb30c70cf",
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        160
+      ],
+      "id": "43951209-9ae4-4948-97d3-55ff797ee3c6",
+      "name": "Backfill geparst?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_leads\nSET priority = '{{ $json.priority }}',\n    next_followup_at = {{ typeof $json.followupDays === 'number' ? \"NOW() + INTERVAL '\" + $json.followupDays + \" days'\" : 'NULL' }}\nWHERE id = '{{ $json.leadId }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        80
+      ],
+      "id": "fbbf8148-e1e9-4d27-95d5-7c89f9e20047",
+      "name": "Lead Backfill Update",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Leads ohne Bewertung laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leads ohne Bewertung laden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (Backfill)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items (Backfill)": {
+      "main": [
+        [
+          {
+            "node": "Backfill abgeschlossen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Backfill Prompt bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill Prompt bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (Backfill)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (Backfill)": {
+      "main": [
+        [
+          {
+            "node": "Backfill Antwort parsen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (Backfill)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill Antwort parsen": {
+      "main": [
+        [
+          {
+            "node": "Backfill geparst?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill geparst?": {
+      "main": [
+        [
+          {
+            "node": "Lead Backfill Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (Backfill)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Backfill Update": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (Backfill)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

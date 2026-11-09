@@ -1,0 +1,618 @@
+{
+  "id": "1Z4fDMv82mOThz6i",
+  "name": "Kalender Workflow v2_1",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "74e0671c-7018-4dd4-9a59-ce996a8a3da9",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2544,
+        2368
+      ],
+      "id": "fdfb0718-637a-4602-9b73-0420a9995579",
+      "name": "Token OK?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: { message: 'Du hast noch kein Outlook-Konto verbunden. Schreib mir in Telegram \\'Setup\\', um den Verbindungslink zu bekommen.' } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4336,
+        2512
+      ],
+      "id": "20c08b3c-4be2-46e9-9e16-15603ec56b58",
+      "name": "Kein Token Fehler"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kalender",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        1872,
+        2464
+      ],
+      "id": "78cea595-f3d9-4dc7-b1c5-c3c39f1bb52a",
+      "name": "Termin Eingang",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========================================\n// n8n CODE NODE — Outlook Kalender\n// Version: 18.06.2026 — ISO-Datum Architektur\n// + Datums-Validierung (03.07.2026)\n// + Multi-Tenant tenantId (09.08.2026)\n// Erwartet Input: \"YYYY-MM-DD [uhrzeit] Uhr [titel]\"\n//           oder: \"YYYY-MM-DD ganztägig [titel]\"\n// Datum kommt fertig vom Intent Layer (Code Node 2)\n// ========================================\n// ---------- INPUT ----------\nconst raw =\n  $json.body?.message || $json.body?.text ||\n  $json.message || $json.text || \"\";\nconst input = String(raw).trim();\nif (!input) throw new Error(\"Kein Input gefunden\");\nconst text = input.toLowerCase();\n// ---------- DATUM (ISO) ----------\nconst isoMatch = text.match(/(\\d{4})-(\\d{2})-(\\d{2})/);\nif (!isoMatch) throw new Error(\"Kein Datum erkannt\");\nconst year  = parseInt(isoMatch[1], 10);\nconst month = parseInt(isoMatch[2], 10) - 1;\nconst day   = parseInt(isoMatch[3], 10);\n\n// ---------- DATUMS-VALIDIERUNG (NEU 03.07.2026) ----------\n// Verhindert dass JS Date() ungültige Werte (z.B. Monat 13, Tag 45)\n// stillschweigend in ein falsches, aber valides Datum umrechnet.\nif (month < 0 || month > 11) {\n  throw new Error(`Ungültiges Datum erkannt: Monat ${month + 1} existiert nicht`);\n}\nif (day < 1 || day > 31) {\n  throw new Error(`Ungültiges Datum erkannt: Tag ${day} existiert nicht`);\n}\nconst daysInMonth = new Date(year, month + 1, 0).getDate();\nif (day > daysInMonth) {\n  throw new Error(`Ungültiges Datum erkannt: ${day}.${month + 1}.${year} existiert nicht (Monat hat nur ${daysInMonth} Tage)`);\n}\n\n// Arbeitskopie ohne ISO-Datum — verhindert dass Datum\n// fälschlich als Uhrzeit interpretiert wird\nconst textNoDate = text.replace(/\\d{4}-\\d{2}-\\d{2}/, \" \").trim();\n// ---------- GANZTÄGIG ----------\nconst allDayKeyword = /ganztägig|ganztags|ganzer tag|ganzen tag/i.test(textNoDate);\nconst hasTime = /(\\d{1,2})[:.](\\d{2})/.test(textNoDate) || /(\\d{1,2})\\s*uhr/i.test(textNoDate);\nconst isAllDay = allDayKeyword || !hasTime;\n// ---------- ZEIT ----------\nlet hour = 10, minute = 0;\nif (!isAllDay) {\n  const fullTime = textNoDate.match(/(\\d{1,2})[:.](\\d{2})/);\n  if (fullTime) {\n    hour = parseInt(fullTime[1], 10);\n    minute = parseInt(fullTime[2], 10);\n  } else {\n    const hourOnly = textNoDate.match(/(\\d{1,2})\\s*uhr/);\n    if (hourOnly) hour = parseInt(hourOnly[1], 10);\n  }\n}\n\n// ---------- ZEIT-VALIDIERUNG (NEU 03.07.2026) ----------\nif (hour < 0 || hour > 23) {\n  throw new Error(`Ungültige Uhrzeit erkannt: ${hour} Uhr existiert nicht`);\n}\nif (minute < 0 || minute > 59) {\n  throw new Error(`Ungültige Uhrzeit erkannt: ${minute} Minuten existiert nicht`);\n}\n\n// ---------- DAUER ----------\nlet durationHours = 1, durationDays = 1;\nconst hourMatch = textNoDate.match(/f[uü]r\\s+(\\d+)\\s*stund/i);\nif (hourMatch) durationHours = parseInt(hourMatch[1], 10);\nconst dayMatch = textNoDate.match(/f[uü]r\\s+(\\d+)\\s*tag/i);\nif (dayMatch) durationDays = parseInt(dayMatch[1], 10);\n// ---------- START / ENDE ----------\nlet startDate = new Date(year, month, day);\nlet endDate;\nif (isAllDay) {\n  startDate.setHours(0, 0, 0, 0);\n  endDate = new Date(startDate);\n  endDate.setDate(startDate.getDate() + durationDays);\n} else {\n  startDate.setHours(hour, minute, 0, 0);\n  endDate = new Date(startDate);\n  endDate.setHours(endDate.getHours() + durationHours);\n}\n// ---------- FORMAT ----------\nfunction formatDate(date) {\n  const pad = (n) => String(n).padStart(2, \"0\");\n  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} `\n       + `${pad(date.getHours())}:${pad(date.getMinutes())}:00`;\n}\nconst formatAllDay = (date) =>\n  `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}T00:00:00`;\n// ---------- TITEL ----------\nlet title = input;\ntitle = title\n  .replace(/\\d{4}-\\d{2}-\\d{2}/g, \"\")\n  .replace(/\\d{1,2}([:.]\\d{2})?\\s*uhr/gi, \"\")\n  .replace(/^(erstelle\\s+(einen?\\s+)?termin\\s*)/i, \"\")\n  .replace(/f[uü]r\\s+\\d+\\s*stunden?/gi, \"\")\n  .replace(/f[uü]r\\s+\\d+\\s*tagen?/gi, \"\")\n  .replace(/\\b(ganztägig|ganztags|ganzer tag|ganzen tag)\\b/gi, \"\")\n  .replace(/^(neuer\\s+termin\\s*)/i, \"\")\n  .replace(/^(buche\\s+(einen?\\s+)?termin\\s*)/i, \"\")\n  .replace(/\\btermin\\b/gi, \"\")\n  .replace(/\\s+/g, \" \").trim();\nif (!title) title = \"Termin\";\n// ---------- OUTPUT ----------\nreturn [{\n  json: {\n    title,\n    start: isAllDay ? formatAllDay(startDate) : formatDate(startDate),\n    end:   isAllDay ? formatAllDay(endDate)   : formatDate(endDate),\n    isAllDay,\n    timezone: isAllDay ? \"\" : \"Europe/Berlin\",\n    originalInput: input,\n    tenantId: $json.body?.tenantId || 'default'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2096,
+        2464
+      ],
+      "id": "167606fc-dd9f-42a1-8b35-652a93ee5a78",
+      "name": "Datum & Zeit parsen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error?.message || 'Ungültige Eingabe konnte nicht verarbeitet werden' }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2320,
+        2560
+      ],
+      "id": "83644e93-5fae-4c7e-9e25-a53e77703e09",
+      "name": "Parse Error Response"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Datum & Zeit parsen').first().json.tenantId }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2320,
+        2368
+      ],
+      "id": "e632dfac-3230-4e79-bf27-e68d1ac06f44",
+      "name": "Get Valid Graph Token",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Get Valid Graph Token').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  subject: $('Datum & Zeit parsen').first().json.title,\n  start: { dateTime: $('Datum & Zeit parsen').first().json.start, timeZone: \"Europe/Berlin\" },\n  end: { dateTime: $('Datum & Zeit parsen').first().json.end, timeZone: \"Europe/Berlin\" },\n  isAllDay: $('Datum & Zeit parsen').first().json.isAllDay,\n  showAs: \"free\",\n  categories: [ $json.category ]\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4336,
+        2272
+      ],
+      "id": "ed461a1a-fa32-4169-ad85-74c7c7b25aed",
+      "name": "HTTP Request",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error?.message || 'Unbekannter Fehler beim Anlegen des Termins' }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4560,
+        2464
+      ],
+      "id": "9f3ab3fd-bfec-4446-a08e-625c9f6888fe",
+      "name": "Error Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ success: true, title: $('Datum & Zeit parsen').first().json.title, start: $('Datum & Zeit parsen').first().json.start }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4784,
+        2224
+      ],
+      "id": "492dd0d0-c334-46ad-a795-a5ac97febb6f",
+      "name": "Success Response"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile FROM jonas_profile WHERE tenant_id = '{{ $('Datum & Zeit parsen').first().json.tenantId.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2768,
+        2272
+      ],
+      "id": "bc685671-6059-4830-aed5-b5ab64c787f6",
+      "name": "Profil laden (Kalender)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Termin kategorisieren (Keyword-Match)\n// Mode: Run Once for Each Item -- Return: einzelnes Objekt, KEIN Array!\n\nconst DEFAULT_KATEGORIEN = [\n  { name: \"Kundentermin\", keywords: [\"kunde\", \"meeting\", \"besprechung\", \"call\"] },\n  { name: \"Akquise\", keywords: [\"akquise\", \"erstgespr\\u00e4ch\", \"pitch\", \"neukunde\"] },\n  { name: \"Angebot\", keywords: [\"angebot\", \"beratung\", \"kalkulation\"] },\n  { name: \"Vertragsabschluss\", keywords: [\"vertrag\", \"abschluss\", \"unterzeichnung\"] },\n  { name: \"Internes\", keywords: [\"intern\", \"team\", \"planung\"] },\n  { name: \"Sonstiges\", keywords: [] }\n];\n\n// jonas_profile.value ist immer TEXT -- json_object_agg liefert die gespeicherte\n// JSON-Liste als STRING zurueck, nicht als geparstes Array (gleiches Muster wie\n// abend_recap_asked_items). Muss explizit geparst werden, sonst 'kategorien.map\n// is not a function' (Live-Incident 05.09.2026, Execution 140553).\nconst profile = $json.profile || {};\nlet kategorien = DEFAULT_KATEGORIEN;\nif (profile.kalender_kategorien) {\n  try {\n    const parsed = JSON.parse(profile.kalender_kategorien);\n    if (Array.isArray(parsed) && parsed.length) kategorien = parsed;\n  } catch (e) { /* Parse-Fehler -> DEFAULT_KATEGORIEN bleibt stehen */ }\n}\n\nconst title = $('Datum & Zeit parsen').first().json.title || \"\";\nconst titleLower = title.toLowerCase();\n\nlet matchedName = null;\nfor (const kat of kategorien) {\n  const keywords = kat.keywords || [];\n  if (keywords.some((kw) => titleLower.includes(String(kw).toLowerCase()))) {\n    matchedName = kat.name;\n    break;\n  }\n}\n\nreturn {\n  json: {\n    category: matchedName,\n    categoryFound: matchedName !== null,\n    source: \"keyword\",\n    kategorienNamen: kategorien.map((k) => k.name),\n    title\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2992,
+        2272
+      ],
+      "id": "98911160-6ba2-40ce-a509-2097ab091029",
+      "name": "Termin kategorisieren"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c7a1a2b3-0000-4000-8000-000000000010",
+              "leftValue": "={{ $json.categoryFound }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3216,
+        2272
+      ],
+      "id": "ca638f74-d569-4fc8-8b68-9e2f9dd7a18d",
+      "name": "Kategorie gefunden?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Kategorie-Prompt bauen (LLM-Fallback)\n// Mode: Run Once for Each Item -- Return: einzelnes Objekt, KEIN Array!\n\nconst kategorienNamen = $json.kategorienNamen && $json.kategorienNamen.length\n  ? $json.kategorienNamen\n  : [\"Kundentermin\", \"Akquise\", \"Angebot\", \"Vertragsabschluss\", \"Internes\", \"Sonstiges\"];\nconst title = $json.title || \"\";\n\nconst systemPrompt = \"Du kategorisierst Kalendertermine f\\u00fcr ein Business. Antworte AUSSCHLIESSLICH mit einem JSON-Objekt der Form {\\\"category\\\": \\\"<Name>\\\"}. W\\u00e4hle den Namen exakt aus dieser Liste: \" + kategorienNamen.join(\", \") + \". Wenn nichts passt, w\\u00e4hle \\\"Sonstiges\\\".\";\nconst userMessage = \"Termintitel: \\\"\" + title + \"\\\"\";\n\nreturn {\n  json: {\n    systemPrompt,\n    userMessage,\n    kategorienNamen\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        2192
+      ],
+      "id": "0de923e3-af46-4a89-a077-f1a4343c7b04",
+      "name": "Kategorie-Prompt bauen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "maxTokens": "60",
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "={{ $json.userMessage }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3664,
+        2192
+      ],
+      "id": "7768f0c0-f0e4-4acc-bfc9-9df96c85baeb",
+      "name": "LLM Call (Kategorie)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Kategorie-Antwort parsen\n// Mode: Run Once for Each Item -- Return: einzelnes Objekt, KEIN Array!\n\nconst raw = $json.text || '';\nconst kategorienNamen = $('Kategorie-Prompt bauen').first().json.kategorienNamen || [];\nlet category = 'Sonstiges';\ntry {\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  const parsed = JSON.parse(raw.slice(start, end + 1));\n  if (parsed.category && kategorienNamen.includes(parsed.category)) {\n    category = parsed.category;\n  }\n} catch (e) { }\n\nreturn { json: { category, source: \"llm\" } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3888,
+        2192
+      ],
+      "id": "de0ae651-ee8b-48bd-bbba-a8aa52e9460e",
+      "name": "Kategorie-Antwort parsen"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        4112,
+        2272
+      ],
+      "id": "1a184df2-09b0-4cbf-9eb4-b13ced8c5996",
+      "name": "Merge (Kategorie)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_kalender_kategorien (tenant_id, event_id, category, source, title)\nVALUES (\n  '{{ $('Datum & Zeit parsen').first().json.tenantId.replace(/'/g, \"''\") }}',\n  '{{ $json.id.replace(/'/g, \"''\") }}',\n  '{{ $('Merge (Kategorie)').first().json.category.replace(/'/g, \"''\") }}',\n  '{{ $('Merge (Kategorie)').first().json.source.replace(/'/g, \"''\") }}',\n  '{{ $('Datum & Zeit parsen').first().json.title.replace(/'/g, \"''\") }}'\n)\nON CONFLICT (tenant_id, event_id) DO UPDATE SET category = EXCLUDED.category, source = EXCLUDED.source, title = EXCLUDED.title;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4560,
+        2224
+      ],
+      "id": "239bee58-79c4-4c99-9a86-012b206e6c67",
+      "name": "Kategorie speichern",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Token OK?": {
+      "main": [
+        [
+          {
+            "node": "Profil laden (Kalender)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Token Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kein Token Fehler": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin Eingang": {
+      "main": [
+        [
+          {
+            "node": "Datum & Zeit parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datum & Zeit parsen": {
+      "main": [
+        [
+          {
+            "node": "Get Valid Graph Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Valid Graph Token": {
+      "main": [
+        [
+          {
+            "node": "Token OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Kategorie speichern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (Kalender)": {
+      "main": [
+        [
+          {
+            "node": "Termin kategorisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin kategorisieren": {
+      "main": [
+        [
+          {
+            "node": "Kategorie gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kategorie gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Merge (Kategorie)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kategorie-Prompt bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kategorie-Prompt bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (Kategorie)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (Kategorie)": {
+      "main": [
+        [
+          {
+            "node": "Kategorie-Antwort parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kategorie-Antwort parsen": {
+      "main": [
+        [
+          {
+            "node": "Merge (Kategorie)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge (Kategorie)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kategorie speichern": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,489 @@
+{
+  "id": "plhcQJ33ZZnIbAyl",
+  "name": "Jonas Sonntag Check",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 4
+            }
+          ]
+        }
+      },
+      "id": "8fa92609-773d-4c76-880e-3b657caa2045",
+      "name": "Sonntag 04:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id,\n       pgp_sym_decrypt(tc.access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS hubspot_token\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id AND tc.provider = 'hubspot'\nWHERE t.status = 'active' AND t.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "id": "cbfac204-e4f2-482c-a33a-65e23a83471d",
+      "name": "Verbundene Tenants laden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -432,
+        272
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e254f6e0-fe87-4e20-a379-1716776867ad",
+      "name": "Tenant Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -208,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, hubspot_contact_id\nFROM jonas_leads\nWHERE tenant_id = '{{ $json.tenant_id.replace(/'/g, \"''\") }}'\n  AND hubspot_contact_id IS NOT NULL AND hubspot_contact_id <> ''",
+        "options": {}
+      },
+      "id": "2dd90038-5e3c-4c04-b600-095dff2b170c",
+      "name": "Leads mit HubSpot-ID laden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        16,
+        192
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !!$json.hubspot_contact_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "79d70463-7c0a-478a-ad02-16d46dfbac7a",
+      "name": "Hat HubSpot-ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        240,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skip: true, orphaned: false } }];"
+      },
+      "id": "bfd8515a-835b-41f9-8512-674ed4e25a0c",
+      "name": "Skip Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.hubspot_contact_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Tenant Loop').first().json.hubspot_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "17deeae4-6644-4d56-8066-b6e56a447738",
+      "name": "HubSpot Kontakt pruefen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        464,
+        96
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skip: false, orphaned: false } }];"
+      },
+      "id": "69f22a1c-796c-4ca4-a8bb-c7963d2ae43a",
+      "name": "Kontakt OK Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $json.error;\nconst errStr = (typeof err === 'string' ? err : (err?.message || JSON.stringify(err || {}))).toString();\nconst statusCode = String(err?.httpCode || err?.statusCode || err?.status || err?.response?.statusCode || '');\nconst is404 = statusCode === '404' || /404|not found/i.test(errStr);\n\nconst leadId = $('Leads mit HubSpot-ID laden').item.json.id;\nconst leadName = $('Leads mit HubSpot-ID laden').item.json.name;\n\nreturn [{ json: {\n  skip: false,\n  orphaned: is404,\n  leadId: is404 ? leadId : null,\n  leadName: is404 ? leadName : null,\n  nonOrphanError: is404 ? null : errStr\n} }];"
+      },
+      "id": "d1767fbc-e870-4e5e-a3dd-94d3c0ec3b85",
+      "name": "404 pruefen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst orphaned = items.filter(i => i.json.orphaned);\nconst orphanedNames = orphaned.map(i => i.json.leadName).filter(Boolean);\nconst orphanedLeadIds = orphaned.map(i => i.json.leadId).filter(Boolean);\nreturn [{ json: { orphanedCount: orphaned.length, orphanedNames, orphanedLeadIds } }];"
+      },
+      "id": "0fab86ec-a48a-4b72-ac37-93599e85c6bd",
+      "name": "Verwaiste Links sammeln",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n  array_agg(name ORDER BY CASE priority WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END, next_followup_at),\n  ARRAY[]::text[]\n) AS reife_lead_names\nFROM jonas_leads\nWHERE tenant_id = '{{ $('Tenant Loop').first().json.tenant_id.replace(/'/g, \"''\") }}'\n  AND hubspot_contact_id IS NULL\n  AND priority IN ('A','B')\n  AND notes IS NOT NULL AND notes <> ''",
+        "options": {}
+      },
+      "id": "5abcd11b-a9b5-4e95-a16b-07092a25b6f7",
+      "name": "Reife Leads finden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1136,
+        192
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const orphanData = $('Verwaiste Links sammeln').first().json;\nconst reifeNames = $json.reife_lead_names || [];\n\nconst parts = [];\nif (orphanData.orphanedCount > 0) {\n  parts.push(`\\ud83e\\uddf9 ${orphanData.orphanedCount} verwaiste HubSpot-Verknuepfung(en) gefunden (Kontakt in HubSpot nicht mehr vorhanden): ${orphanData.orphanedNames.join(', ')}. Noch nicht automatisch bereinigt -- bitte pruefen.`);\n}\nif (reifeNames.length > 0) {\n  parts.push(`\\u2705 ${reifeNames.length} Lead(s) bereit fuer HubSpot: ${reifeNames.join(', ')}.`);\n}\n\nconst shouldSend = parts.length > 0;\nconst text = shouldSend ? `Sonntag-Check:\\n\\n${parts.join('\\n\\n')}` : '';\n\nreturn [{ json: { shouldSend, text } }];"
+      },
+      "id": "09e01610-ba56-4a14-a247-7cf452661a70",
+      "name": "Digest bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.shouldSend }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "58ef53d3-dec9-4713-bc16-2f15559cf3dd",
+      "name": "Digest noetig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Tenant Loop').first().json.telegram_chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "365bfd5b-120c-4ace-b750-64404cc6c10a",
+      "name": "Digest senden",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1808,
+        432
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "3a3dbd42-27db-4435-9d11-5041d099395b",
+      "name": "Alle Tenants fertig",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        16,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Sonntag 04:00": {
+      "main": [
+        [
+          {
+            "node": "Verbundene Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verbundene Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant Loop": {
+      "main": [
+        [
+          {
+            "node": "Alle Tenants fertig",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Leads mit HubSpot-ID laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leads mit HubSpot-ID laden": {
+      "main": [
+        [
+          {
+            "node": "Hat HubSpot-ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hat HubSpot-ID?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt pruefen": {
+      "main": [
+        [
+          {
+            "node": "Kontakt OK Marker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "404 pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Marker": {
+      "main": [
+        [
+          {
+            "node": "Verwaiste Links sammeln",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kontakt OK Marker": {
+      "main": [
+        [
+          {
+            "node": "Verwaiste Links sammeln",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "404 pruefen": {
+      "main": [
+        [
+          {
+            "node": "Verwaiste Links sammeln",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verwaiste Links sammeln": {
+      "main": [
+        [
+          {
+            "node": "Reife Leads finden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reife Leads finden": {
+      "main": [
+        [
+          {
+            "node": "Digest bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest bauen": {
+      "main": [
+        [
+          {
+            "node": "Digest noetig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest noetig?": {
+      "main": [
+        [
+          {
+            "node": "Digest senden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest senden": {
+      "main": [
+        [
+          {
+            "node": "Tenant Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,4299 @@
+{
+  "id": "oC018OR5AqtuxFPs",
+  "name": "Jonas Proactive Scheduler v14",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2416,
+        2096
+      ],
+      "id": "b38c92cd-5eda-4acb-8c61-6195ef52337b",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id, t.channel\nFROM tenants t\nWHERE t.status = 'active'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2640,
+        2096
+      ],
+      "id": "65b4b8e1-5a0a-4a10-abb6-09d8cf6e5718",
+      "name": "Aktive Tenants laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        496
+      ],
+      "id": "d481fe15-0a27-4d09-8581-b82382e8c99c",
+      "name": "Loop Over Items (FollowUp)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        1472
+      ],
+      "id": "d28a9589-5fe3-4f0d-b5c0-a1d331382080",
+      "name": "Loop Over Items (Weekly)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        3488
+      ],
+      "id": "382bee16-a85b-495d-bd5e-56eb49d70ed5",
+      "name": "Loop Over Items (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        4304
+      ],
+      "id": "a8c80bed-a045-44a0-994a-ad61baeae45b",
+      "name": "Loop Over Items (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile,\n       (SELECT telegram_chat_id FROM tenants WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}') AS telegram_chat_id\nFROM jonas_profile\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        -80
+      ],
+      "id": "6cb9337c-63ea-4850-922a-aeb617b6b52b",
+      "name": "Profil laden (FollowUp)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden (FollowUp)').first().json.profile || {};\nconst active = profile.follow_up_guard_aktiv === 'true'; // Default false (opt-in)\nconst targetTime = profile.follow_up_guard_uhrzeit || '09:00';\nconst [targetHour, targetMinuteRaw] = targetTime.split(':').map(Number);\nconst targetMinute = targetMinuteRaw || 0;\nconst berlinNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Berlin' }));\nconst currentHour = berlinNow.getHours();\nconst currentMinute = berlinNow.getMinutes();\nconst bucket5 = m => Math.floor(m / 5) * 5;\nreturn [{ json: { match: active && currentHour === targetHour && bucket5(currentMinute) === bucket5(targetMinute) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        -80
+      ],
+      "id": "b78e9a10-ce2a-4a6b-aefb-8b73158ad0d9",
+      "name": "Follow-Up Guard Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ea89403f-c7bc-4f84-89ce-d3a2625f801c",
+              "leftValue": "={{ $json.match }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3536,
+        -80
+      ],
+      "id": "d400bbd0-5f0f-4e19-8066-f3e7343388ca",
+      "name": "Stunde erreicht? (FollowUp)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_followup_sent (tenant_id, sent_date)\nVALUES ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', CURRENT_DATE)\nON CONFLICT DO NOTHING\nRETURNING sent_date::text AS sent_date",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3760,
+        -80
+      ],
+      "id": "d61f8e83-9944-47f4-8c0f-75af13d0f605",
+      "name": "Follow-Up Sent?",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "492742be-e4b9-4194-9ef9-b914d4e1a781",
+              "leftValue": "={{ $json.sent_date }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3984,
+        -80
+      ],
+      "id": "ae2d1c39-fec8-4732-9570-80b2f73bc296",
+      "name": "Heute schon? (FollowUp)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4880,
+        -112
+      ],
+      "id": "a256cd2b-58c5-4692-922b-a2dc04e0396e",
+      "name": "HubSpot Token laden (FollowUp)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "719b9de3-c652-47cd-af9b-54299016398b",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5104,
+        -112
+      ],
+      "id": "517f8047-faf5-4e83-9201-4f20c9d5a6e7",
+      "name": "HubSpot aktiv? (FollowUp)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (FollowUp)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filterGroups\": [{ \"filters\": [{ \"propertyName\": \"dealstage\", \"operator\": \"NOT_IN\", \"values\": [\"closedwon\", \"closedlost\"] }] }],\n  \"properties\": [\"dealname\", \"dealstage\", \"hs_lastmodifieddate\"],\n  \"limit\": 100\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5328,
+        -112
+      ],
+      "id": "b9824eb9-8d18-4562-bdb8-1e3780a727f5",
+      "name": "HubSpot Deals suchen (FollowUp)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skipped: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        80
+      ],
+      "id": "fb28ead4-ee3c-487d-b302-53775fab9c9c",
+      "name": "HubSpot Uebersprungen (FollowUp)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, company, priority, notes, language,\n  EXTRACT(DAY FROM NOW() - next_followup_at)::int AS overdue_days,\n  ROW_NUMBER() OVER (\n    ORDER BY CASE priority WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 WHEN 'D' THEN 4 ELSE 5 END,\n      next_followup_at ASC\n  )::int AS rn\nFROM jonas_leads\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND next_followup_at IS NOT NULL\n  AND next_followup_at <= NOW()\nORDER BY rn ASC\nLIMIT 20",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4208,
+        272
+      ],
+      "id": "c5359e91-dfbc-4f2b-a682-5fdaa9eefc94",
+      "name": "Leads Stale laden (FollowUp)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        5552,
+        16
+      ],
+      "id": "f842d257-8e56-45a0-9360-9c54266cef42",
+      "name": "Merge (FollowUp)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function escapeHtml(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\nfunction safeGet(nodeName, path) {\n  try {\n    const node = $(nodeName);\n    if (node.first()) { return path(node.first().json); }\n  } catch (e) { return undefined; }\n  return undefined;\n}\nconst STALE_DAYS = 7;\nconst now = Date.now();\nconst telegramChatId = safeGet('Profil laden (FollowUp)', j => j.telegram_chat_id) || null;\nconst dealsRaw = safeGet('HubSpot Deals suchen (FollowUp)', j => j.results) || [];\nconst staleDeals = dealsRaw.map(d => {\n  const lastMod = d.properties?.hs_lastmodifieddate ? new Date(d.properties.hs_lastmodifieddate).getTime() : null;\n  const days = lastMod ? Math.floor((now - lastMod) / 86400000) : null;\n  return { name: d.properties?.dealname, days };\n}).filter(d => d.days !== null && d.days > STALE_DAYS);\nconst staleLeads = $('FollowUp Leads zusammenfuehren').all().map(i => i.json).filter(l => l && l.name);\nif (!staleDeals.length && !staleLeads.length) {\n  return [{ json: { reply: '', telegram_chat_id: telegramChatId } }];\n}\nlet text = 'Follow-Up Guard — das braucht Aufmerksamkeit:\\n';\nif (staleDeals.length) {\n  text += '\\nDeals ohne Bewegung:\\n' + staleDeals.map(d => `• ${d.name} (${d.days}d)`).join('\\n');\n}\nif (staleLeads.length) {\n  text += '\\n\\nFaellige Leads:\\n' + staleLeads.map(l => {\n    let line = `• ${l.name}`;\n    if (l.company) line += ` (${l.company})`;\n    if (l.priority) line += ` — Prioritaet ${l.priority}`;\n    const days = l.overdue_days;\n    if (typeof days === 'number') {\n      if (days >= 14) line += ` — 🔴 seit ${days}d ignoriert, bitte reagieren`;\n      else if (days >= 5) line += ` — ⚠️ ueberfaellig seit ${days}d`;\n      else line += ` — faellig seit ${days}d`;\n    }\n    if (l.draft) {\n      line += `\\n  Nachrichtenvorschlag:\\n  <pre><code class=\"language-plain\">${escapeHtml(l.draft)}</code></pre>`;\n    }\n    return line;\n  }).join('\\n\\n');\n}\nreturn [{ json: { reply: text, telegram_chat_id: telegramChatId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5776,
+        16
+      ],
+      "id": "bd2712ac-3d65-4d07-99ef-cf2de8734a82",
+      "name": "Follow-Up Guard formatieren"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4a132ba1-37ca-4ab2-b6db-e5ae98821324",
+              "leftValue": "={{ $json.reply }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6000,
+        16
+      ],
+      "id": "766d9a61-6c46-4727-96f3-c289231ad87b",
+      "name": "Etwas zu melden? (FollowUp)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        6224,
+        96
+      ],
+      "id": "ca38c7be-91d9-408c-a25c-a8e764b9a090",
+      "name": "Telegram senden (FollowUp)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile,\n       (SELECT telegram_chat_id FROM tenants WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}') AS telegram_chat_id\nFROM jonas_profile\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        1136
+      ],
+      "id": "e0dac351-e63c-42fd-8252-c03ee7708209",
+      "name": "Profil laden (Weekly)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden (Weekly)').first().json.profile || {};\nconst active = profile.weekly_review_aktiv === 'true'; // Default false (opt-in)\nconst targetDay = parseInt(profile.weekly_review_tag || '1', 10); // ISO Wochentag, Montag=1\nconst targetTime = profile.weekly_review_uhrzeit || '08:00';\nconst [targetHour, targetMinuteRaw] = targetTime.split(':').map(Number);\nconst targetMinute = targetMinuteRaw || 0;\nconst berlinNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Berlin' }));\nconst jsDay = berlinNow.getDay(); // 0=So..6=Sa\nconst isoDay = jsDay === 0 ? 7 : jsDay;\nconst currentHour = berlinNow.getHours();\nconst currentMinute = berlinNow.getMinutes();\nconst bucket5 = m => Math.floor(m / 5) * 5;\n// ISO-Woche fuer Dedupe-Key (z.B. '2026-W35')\nconst d2 = new Date(Date.UTC(berlinNow.getFullYear(), berlinNow.getMonth(), berlinNow.getDate()));\nconst dayNum = (d2.getUTCDay() + 6) % 7;\nd2.setUTCDate(d2.getUTCDate() - dayNum + 3);\nconst firstThursday = new Date(Date.UTC(d2.getUTCFullYear(), 0, 4));\nconst weekNum = 1 + Math.round(((d2 - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);\nconst isoWeek = `${d2.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;\nreturn [{ json: { match: active && isoDay === targetDay && currentHour === targetHour && bucket5(currentMinute) === bucket5(targetMinute), isoWeek } }];;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        1136
+      ],
+      "id": "1744624d-a8cf-4872-adae-c07da30fbc7a",
+      "name": "Weekly Review Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1d5bd5f0-88db-449a-a936-2f77462c48e2",
+              "leftValue": "={{ $json.match }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3536,
+        1136
+      ],
+      "id": "1c6f7122-8b89-41be-9a74-a28d88f4bb95",
+      "name": "Zeit erreicht? (Weekly)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_weekly_sent (tenant_id, sent_week)\nVALUES ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', '{{ $('Weekly Review Gate').first().json.isoWeek }}')\nON CONFLICT DO NOTHING\nRETURNING sent_week",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3760,
+        1136
+      ],
+      "id": "8bf31b8d-e256-4645-94a1-41a7a5ca5267",
+      "name": "Weekly Sent?",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b844cc28-a382-49c0-afe8-3a20241ca0d6",
+              "leftValue": "={{ $json.sent_week }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3984,
+        1136
+      ],
+      "id": "ed1f5fe0-5f85-46f2-8cb8-ccbff6ffb714",
+      "name": "Diese Woche schon? (Weekly)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT type, content\nFROM jonas_memory\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND status = 'done'\n  AND updated_at > NOW() - INTERVAL '7 days'\nORDER BY updated_at DESC\nLIMIT 30",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4656,
+        896
+      ],
+      "id": "4f97378f-d32e-4e83-9d2c-8c8b6c55ebd3",
+      "name": "Erledigte Memory laden (Weekly)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4208,
+        1184
+      ],
+      "id": "f7cd0ad7-1bc8-44a9-8cef-aa0eee783d52",
+      "name": "HubSpot Token laden (Weekly)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "440f49f8-7821-4ff5-b547-a11773622ca6",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4432,
+        1184
+      ],
+      "id": "59d70e28-d8cc-41d2-8cb0-efc3fc12e213",
+      "name": "HubSpot aktiv? (Weekly)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Weekly)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filterGroups\": [{ \"filters\": [{ \"propertyName\": \"dealstage\", \"operator\": \"NOT_IN\", \"values\": [\"closedwon\", \"closedlost\"] }] }],\n  \"properties\": [\"dealname\", \"dealstage\", \"hs_lastmodifieddate\"],\n  \"limit\": 100\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4656,
+        1088
+      ],
+      "id": "2892ca44-bc29-4167-9dd9-c82051dcb5c6",
+      "name": "HubSpot Deals suchen (Weekly)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skipped: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4656,
+        1280
+      ],
+      "id": "4eee5b21-3a31-4182-8337-d0806e7c418d",
+      "name": "HubSpot Uebersprungen (Weekly)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, company\nFROM jonas_leads\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND created_at > NOW() - INTERVAL '7 days'\nORDER BY created_at DESC\nLIMIT 30",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4656,
+        1472
+      ],
+      "id": "b64b7422-cf09-452f-810e-bfa5dd91499e",
+      "name": "Neue Leads laden (Weekly)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        4880,
+        1072
+      ],
+      "id": "5dc360c5-dbd7-41f4-9581-1bc91ff1e3ba",
+      "name": "Merge (Weekly)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeGet(nodeName, path) {\n  try {\n    const node = $(nodeName);\n    if (node.first()) { return path(node.first().json); }\n  } catch (e) { return undefined; }\n  return undefined;\n}\nconst STALE_DAYS = 7;\nconst now = Date.now();\nconst telegramChatId = safeGet('Profil laden (Weekly)', j => j.telegram_chat_id) || null;\nconst done = $('Erledigte Memory laden (Weekly)').all().map(i => i.json).filter(m => m && m.content);\nconst dealsRaw = safeGet('HubSpot Deals suchen (Weekly)', j => j.results) || [];\nconst staleDeals = dealsRaw.map(d => {\n  const lastMod = d.properties?.hs_lastmodifieddate ? new Date(d.properties.hs_lastmodifieddate).getTime() : null;\n  const days = lastMod ? Math.floor((now - lastMod) / 86400000) : null;\n  return { name: d.properties?.dealname, days };\n}).filter(d => d.days !== null && d.days > STALE_DAYS);\nconst newLeads = $('Neue Leads laden (Weekly)').all().map(i => i.json).filter(l => l && l.name);\nlet text = 'Wochen-Review:\\n';\ntext += `\\nErledigt diese Woche: ${done.length ? done.length : 'nichts erfasst'}`;\nif (done.length) text += '\\n' + done.slice(0, 10).map(m => `• [${m.type}] ${m.content}`).join('\\n');\ntext += `\\n\\nNeue Leads diese Woche: ${newLeads.length || 'keine'}`;\nif (newLeads.length) text += '\\n' + newLeads.map(l => `• ${l.name}${l.company ? ` (${l.company})` : ''}`).join('\\n');\ntext += `\\n\\nDeals ohne Bewegung (>${STALE_DAYS}d): ${staleDeals.length || 'keine'}`;\nif (staleDeals.length) text += '\\n' + staleDeals.map(d => `• ${d.name} (${d.days}d)`).join('\\n');\nreturn [{ json: { reply: text, telegram_chat_id: telegramChatId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5104,
+        1088
+      ],
+      "id": "bb23f904-691c-4ae0-8b2a-11604d5120c7",
+      "name": "Weekly Review formatieren"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5328,
+        1200
+      ],
+      "id": "0e30e477-7638-4e27-9369-de7cca62f1d3",
+      "name": "Telegram senden (Weekly)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile,\n       (SELECT telegram_chat_id FROM tenants WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}') AS telegram_chat_id\nFROM jonas_profile\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        2816
+      ],
+      "id": "646dccee-4ab5-4efb-b447-c5ab7fd68c5a",
+      "name": "Profil laden (PreMeeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden (PreMeeting)').first().json.profile || {};\nconst active = profile.premeeting_snapshot_aktiv === 'true'; // Default false (opt-in)\nconst domain = (profile.company_domain || '').toLowerCase().trim();\nreturn [{ json: { match: active && domain.length > 0, domain } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        2816
+      ],
+      "id": "4289712d-d6d7-4f01-ad6a-7c1121ea377e",
+      "name": "Pre-Meeting Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "87dc35de-0f5e-43d1-8193-e49dc0a8e761",
+              "leftValue": "={{ $json.match }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3536,
+        2816
+      ],
+      "id": "d9298dfa-71f8-4254-88e6-ca742ff65bc1",
+      "name": "Aktiv & Domain gesetzt?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Aktive Tenants laden').item.json.tenant_id }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3760,
+        2816
+      ],
+      "id": "f4804bb1-dd61-4333-a315-3a55e81e7fed",
+      "name": "Graph Token (PreMeeting)",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "39f4828e-0ff8-4874-b1b2-59eee430edb6",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3984,
+        2816
+      ],
+      "id": "6c41c821-46b9-4576-953b-5c6457b1b593",
+      "name": "Token OK? (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + encodeURIComponent($now.plus({minutes:15}).toISO()) + \"&endDateTime=\" + encodeURIComponent($now.plus({minutes:20}).toISO()) + \"&$select=id,subject,start,end,attendees&$top=25\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('Graph Token (PreMeeting)').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4208,
+        2816
+      ],
+      "id": "d7ca334f-878b-48ff-9bd4-451dba30b0a9",
+      "name": "Kalenderdaten abrufen (PreMeeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.value || [];\nreturn [{ json: { events } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4432,
+        2816
+      ],
+      "id": "2f3c9f92-9c6d-4571-819a-94351c49548f",
+      "name": "Events entpacken (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const domain = $('Pre-Meeting Gate').first().json.domain;\nconst events = $json.events || [];\nfor (const e of events) {\n  const attendees = (e.attendees || []).map(a => a.emailAddress).filter(Boolean);\n  const external = attendees.find(a => {\n    const addr = (a.address || '').toLowerCase();\n    const atDomain = addr.split('@')[1] || '';\n    return atDomain && atDomain !== domain;\n  });\n  if (external) {\n    return [{ json: {\n      found: true,\n      eventId: e.id,\n      subject: e.subject || '(ohne Titel)',\n      start: e.start?.dateTime || null,\n      attendeeEmail: external.address,\n      attendeeName: external.name || external.address\n    } }];\n  }\n}\nreturn [{ json: { found: false } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4656,
+        2816
+      ],
+      "id": "853dec41-bc50-481a-880c-10409f549dd3",
+      "name": "Externe Meetings filtern"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "66b2865d-e8a4-43f1-b38a-76a88bf4a403",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4880,
+        2816
+      ],
+      "id": "17b43842-becf-48b9-913f-713420f51f1e",
+      "name": "Externes Meeting gefunden?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_premeeting_sent (tenant_id, event_id)\nVALUES ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', '{{ $json.eventId.replace(/'/g, \"''\") }}')\nON CONFLICT DO NOTHING\nRETURNING event_id",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5104,
+        2816
+      ],
+      "id": "a61125ea-fd19-47b0-a61c-18957eb300d4",
+      "name": "Premeeting Sent?",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c1a544ae-55bd-473c-85de-010a85bb5e82",
+              "leftValue": "={{ $json.event_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5328,
+        2816
+      ],
+      "id": "e75c3c21-5c0c-4840-86fb-1431d024f89e",
+      "name": "Schon gesendet? (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT kategorie, zusammenfassung, sender\nFROM jonas_email_recent\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND sender ILIKE '%' || '{{ $('Externe Meetings filtern').first().json.attendeeEmail.replace(/'/g, \"''\") }}' || '%'\n  AND expires_at > NOW()\nORDER BY created_at DESC\nLIMIT 5",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6000,
+        2432
+      ],
+      "id": "0cb75afd-23df-447a-99d5-a54019ea5873",
+      "name": "Email-Cache laden (PreMeeting)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5552,
+        2720
+      ],
+      "id": "b2ec0f26-7be5-41c3-a2fe-63bb50f0389f",
+      "name": "HubSpot Token laden (PreMeeting)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "978b6811-9f4c-44da-a938-2cec3515b9b3",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5776,
+        2720
+      ],
+      "id": "197c4447-0d3c-43a3-b52f-2d1567b7c730",
+      "name": "HubSpot aktiv? (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (PreMeeting)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $('Externe Meetings filtern').first().json.attendeeEmail }] }], properties: ['firstname','lastname','company','lastmodifieddate'], limit: 1 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6000,
+        2624
+      ],
+      "id": "a593740a-8f05-4eca-a5b8-ebd3f894323d",
+      "name": "HubSpot Kontakt suchen (PreMeeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skipped: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6000,
+        2816
+      ],
+      "id": "6728ed41-487e-4798-bdf4-6f6fc6c90fd4",
+      "name": "HubSpot Uebersprungen (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, company, notes\nFROM jonas_leads\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND (contact_info ILIKE '%' || '{{ $('Externe Meetings filtern').first().json.attendeeEmail.replace(/'/g, \"''\") }}' || '%'\n       OR name ILIKE '%' || '{{ $('Externe Meetings filtern').first().json.attendeeName.replace(/'/g, \"''\") }}' || '%')\nLIMIT 3",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6000,
+        3008
+      ],
+      "id": "477af42b-4ac1-4062-96d9-e33fcd115b61",
+      "name": "Lead-Match laden (PreMeeting)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6224,
+        2624
+      ],
+      "id": "a6a4bb68-4ca7-4cac-8f95-aa25e0e47db3",
+      "name": "Merge (PreMeeting)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeGet(nodeName, path) {\n  try {\n    const node = $(nodeName);\n    if (node.first()) { return path(node.first().json); }\n  } catch (e) { return undefined; }\n  return undefined;\n}\nconst meeting = $('Externe Meetings filtern').first().json;\nconst userName = safeGet('Profil laden (PreMeeting)', j => j.profile?.name) || 'der Nutzer';\nconst telegramChatId = safeGet('Profil laden (PreMeeting)', j => j.telegram_chat_id) || null;\nconst emails = $('Email-Cache laden (PreMeeting)').all().map(i => i.json).filter(e => e && e.zusammenfassung);\nconst contactsRaw = safeGet('HubSpot Kontakt suchen (PreMeeting)', j => j.results) || [];\nconst hubspotContact = contactsRaw[0]?.properties || null;\nconst leads = $('Lead-Match laden (PreMeeting)').all().map(i => i.json).filter(l => l && l.name);\nconst systemPrompt = 'Du bist Jonas. Baue ein kurzes Pre-Meeting-Briefing auf Deutsch (max 4-5 Zeilen) fuer ' + userName + ', '\n  + 'der gleich ein externes Meeting hat. Nutze NUR die gelieferten Fakten, erfinde nichts. '\n  + 'Wenn zu einer Quelle nichts vorliegt, einfach weglassen statt das zu erwaehnen. Direkt und knapp, wie ein guter Assistent kurz vorm Meeting.';\nconst userMessage = `Meeting: ${meeting.subject} um ${meeting.start}\\n`\n  + `Teilnehmer: ${meeting.attendeeName} (${meeting.attendeeEmail})\\n`\n  + `HubSpot-Kontakt: ${hubspotContact ? JSON.stringify(hubspotContact) : 'kein Treffer'}\\n`\n  + `Gespeicherte Leads: ${leads.length ? JSON.stringify(leads) : 'kein Treffer'}\\n`\n  + `Aktuelle Mails von diesem Kontakt: ${emails.length ? JSON.stringify(emails) : 'keine'}`;\nreturn [{ json: { systemPrompt, userMessage, subject: meeting.subject, telegram_chat_id: telegramChatId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6448,
+        2640
+      ],
+      "id": "5a388dde-3e37-49c2-a958-5e3cf221f654",
+      "name": "Pre-Meeting Kontext bauen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "={{ $json.userMessage }}",
+            "maxTokens": "350"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6672,
+        2640
+      ],
+      "id": "f8119593-b8d8-42cb-a1ff-f16bdfdd43c0",
+      "name": "LLM Call (PreMeeting)",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.text || '';\nconst kontext = $('Pre-Meeting Kontext bauen').first().json;\nconst subject = kontext.subject;\nconst reply = text ? `Gleich: ${subject}\\n\\n${text}` : `Gleich: ${subject} — konnte den Kontext gerade nicht zusammenfassen.`;\nreturn [{ json: { reply, telegram_chat_id: kontext.telegram_chat_id } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6896,
+        2640
+      ],
+      "id": "c2aaac55-61b2-4d81-94cc-de6f9d46a066",
+      "name": "Pre-Meeting Reply formatieren"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        7120,
+        2896
+      ],
+      "id": "162b32c5-5f05-4948-846d-2bcb667b7019",
+      "name": "Telegram senden (PreMeeting)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile FROM jonas_profile WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        3776
+      ],
+      "id": "c733676c-409a-4230-a66f-3b5c2036ea43",
+      "name": "Profil laden (AbendRecap)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden (AbendRecap)').first().json.profile || {};\nconst active = profile.abend_recap_aktiv === 'true'; // Default false (opt-in)\nconst targetTime = profile.abend_recap_uhrzeit || '19:00';\nconst [targetHour, targetMinuteRaw] = targetTime.split(':').map(Number);\nconst targetMinute = targetMinuteRaw || 0;\nconst berlinNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Berlin' }));\nconst currentHour = berlinNow.getHours();\nconst currentMinute = berlinNow.getMinutes();\nconst bucket5 = m => Math.floor(m / 5) * 5;\nreturn [{ json: { match: active && currentHour === targetHour && bucket5(currentMinute) === bucket5(targetMinute) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        3776
+      ],
+      "id": "276a1762-95ac-4cff-925a-d1c2d4e817f2",
+      "name": "Abend-Recap Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f90978ca-0ed8-485e-98a2-12e07864c3e0",
+              "leftValue": "={{ $json.match }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3536,
+        3776
+      ],
+      "id": "b1c7c836-dae4-4ae4-b5f4-105da29f5825",
+      "name": "Stunde erreicht? (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_abendrecap_sent (tenant_id, sent_date)\nVALUES ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', CURRENT_DATE)\nON CONFLICT DO NOTHING\nRETURNING sent_date::text AS sent_date",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3760,
+        3776
+      ],
+      "id": "6ca765df-bf7d-4c4a-9ff0-c3a1a64f9a39",
+      "name": "Abend-Recap Sent?",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "65f1e6f7-062c-44b3-87b2-3a4da70783fd",
+              "leftValue": "={{ $json.sent_date }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3984,
+        3776
+      ],
+      "id": "3138e8bc-172c-49b5-bdb8-83ce7439ad52",
+      "name": "Heute schon? (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Profil laden (AbendRecap)').first().json.profile || {};\nconst wasPending = profile.abend_recap_pending === 'true';\nconst currentStreak = parseInt(profile.abend_recap_miss_streak || '0', 10);\nconst newStreak = wasPending ? currentStreak + 1 : currentStreak;\nconst shouldDisable = newStreak >= 5;\nreturn [{ json: { newStreak, shouldDisable } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4208,
+        3776
+      ],
+      "id": "c8981df4-72e4-4e30-9bd8-34e9b5bd7d69",
+      "name": "Miss-Streak berechnen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bc0e0f3b-9451-4b72-88db-8d554dceb670",
+              "leftValue": "={{ $json.shouldDisable }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4432,
+        3776
+      ],
+      "id": "8c6f4df3-6b63-4d7b-9b40-0f7c8c64bb85",
+      "name": "Auto-Abschalten?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_profile (tenant_id, key, value) VALUES\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_aktiv', 'false'),\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_pending', 'false'),\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_miss_streak', '0')\nON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4656,
+        3680
+      ],
+      "id": "f9b17570-63dc-4b7a-a7c8-90152caf34e6",
+      "name": "Abend-Recap Deaktivieren",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Aktive Tenants laden').item.json.telegram_chat_id }}",
+        "text": "=Du hast 5x nicht auf die Abend-Frage reagiert — ich schalte das Abend-Recap ab. Schreib mir jederzeit \"Abend-Recap an\", wenn du es wieder willst.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4880,
+        3728
+      ],
+      "id": "dd4f601c-e3c0-4c85-9fa9-6d3b75bacb36",
+      "name": "Abschalt-Nachricht senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_profile (tenant_id, key, value) VALUES\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_pending', 'true'),\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_requested_at', '{{ $now.toISO() }}'),\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_miss_streak', '{{ $('Miss-Streak berechnen').first().json.newStreak }}'),\n  ('{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}', 'abend_recap_asked_items', '{{ $('Abend-Recap Frage bauen').first().json.askedItems.replace(/'/g, \"''\") }}')\nON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6448,
+        3920
+      ],
+      "id": "4cab1754-8f3b-4274-b95d-16d070b52beb",
+      "name": "Abend-Recap Frage-Status setzen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Aktive Tenants laden').item.json.telegram_chat_id }}",
+        "text": "={{ $('Abend-Recap Frage bauen').first().json.question }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        6672,
+        4000
+      ],
+      "id": "b7f3032c-0815-4ff0-8a84-e1dd5ecca421",
+      "name": "Abend-Frage senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rollout abgeschlossen 06.09.2026 (Nutzer: \"Abend-Recap Smarter erfolgreich lang genug getestet\").\nconst requiredChannels = ['internal', 'beta', 'stable'];\nconst tenantChannel = $('Aktive Tenants laden').item.json.channel || 'stable';\nreturn [{ json: { ...$json, channelGateOpen: requiredChannels.includes(tenantChannel) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4656,
+        3872
+      ],
+      "id": "907d4b32-cf1b-41e0-ba93-6d29005799e9",
+      "name": "Channel Gate: Abend-Recap Smarter"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "98f9fcff-ab9d-4ef3-9707-922b3d7194e8",
+              "leftValue": "={{ $json.channelGateOpen }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4880,
+        3920
+      ],
+      "id": "979f0024-27a0-4d5c-9500-493cd673b948",
+      "name": "Channel Gate Offen? Abend-Recap Smarter"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, content, due_date\nFROM jonas_memory\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND status != 'done'\n  AND due_date IS NOT NULL\n  AND due_date <= CURRENT_DATE\nORDER BY due_date ASC\nLIMIT 20",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5104,
+        3712
+      ],
+      "id": "4d855725-9292-4ead-a596-4e998c1a6dee",
+      "name": "Faellige Memory laden (AbendRecap)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Aktive Tenants laden').item.json.tenant_id }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5328,
+        3712
+      ],
+      "id": "72bc1a7f-79ef-4aec-a1c0-d3d87db18839",
+      "name": "Graph Token (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "26f7cdfa-4a4a-41f9-a5e1-8e113e57b5e9",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5552,
+        3712
+      ],
+      "id": "44c3fccb-70f2-45cf-8f03-6eee51b97734",
+      "name": "Token OK? (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.value || [];\nreturn [{ json: { events } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6000,
+        3632
+      ],
+      "id": "d4b7c09f-01a6-45ca-a91a-578e1d0acc82",
+      "name": "Events entpacken (AbendRecap)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeGet(fn, fallback) { try { return fn(); } catch (e) { return fallback; } }\n\nconst memoryItems = safeGet(() => $('Faellige Memory laden (AbendRecap)').all().map(i => i.json).filter(r => r.id), []);\nconst events = safeGet(() => $('Events entpacken (AbendRecap)').first().json.events, []) || [];\n\nconst askedItems = [];\nconst parts = [];\n\nfor (const m of memoryItems) {\n  askedItems.push({ kind: 'memory', id: m.id, label: m.content });\n  parts.push(`\"${m.content}\" — durch?`);\n}\nfor (const e of events) {\n  const label = e.subject || '(ohne Titel)';\n  askedItems.push({ kind: 'event', id: e.id, label });\n  const time = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }) : '';\n  parts.push(`Termin \"${label}\"${time ? ' um ' + time + ' Uhr' : ''} — gelaufen?`);\n}\n\nconst question = parts.length > 0\n  ? 'Kurzer Rückblick auf heute: ' + parts.join(' ')\n  : 'Wie war dein Tag heute?';\n\nreturn [{ json: { question, itemCount: askedItems.length, askedItems: JSON.stringify(askedItems) } }];;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6224,
+        3920
+      ],
+      "id": "c6afa91f-503d-45a1-8ab1-45545e0672d6",
+      "name": "Abend-Recap Frage bauen"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + encodeURIComponent($now.setZone('Europe/Berlin').startOf('day').toISO()) + \"&endDateTime=\" + encodeURIComponent($now.setZone('Europe/Berlin').endOf('day').toISO()) + \"&$select=id,subject,start,end&$top=25\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Graph Token (AbendRecap)').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5776,
+        3632
+      ],
+      "id": "38cec279-1a19-4448-b3c4-7b43d9a545a7",
+      "name": "Kalenderdaten abrufen (AbendRecap)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        2320
+      ],
+      "id": "b04493f5-8f7e-40d7-99ea-cf9b233dffcd",
+      "name": "Loop Termin-Radar Tenants"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile,\n       (SELECT telegram_chat_id FROM tenants WHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}') AS telegram_chat_id,\n       '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AS tenant_id\nFROM jonas_profile\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        2048
+      ],
+      "id": "e670b68d-6a02-4136-8d05-5c05a8c4ab6e",
+      "name": "Profil laden (Wichtig)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const profile = $json.profile || {};\nconst featureActive = profile.termin_radar_aktiv === 'true';\nreturn { json: { ...$json, featureActive } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        2048
+      ],
+      "id": "cdba18da-d796-41a3-85d3-cb3e1c1f0091",
+      "name": "Termin-Radar Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6bd4de8d-6a5e-4b61-b9a2-03606d2690fd",
+              "leftValue": "={{ $json.featureActive }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3536,
+        2048
+      ],
+      "id": "b0ec4516-3a9b-4ca7-8048-2a8fad56e3cd",
+      "name": "Feature aktiv? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const now = $now.setZone('Europe/Berlin');\nconst onSchedule = (now.hour % 3 === 0) && (now.minute < 5);\nreturn { json: { ...$json, scanDran: onSchedule } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        2048
+      ],
+      "id": "f4a6f2e1-ed69-4d02-98a0-b4a0672471c9",
+      "name": "Scan-Rhythmus Gate (Wichtig)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "48163ca2-9177-4060-a61a-d520491f4370",
+              "leftValue": "={{ $json.scanDran }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3984,
+        2048
+      ],
+      "id": "5140eba4-29cd-4208-8c63-f046a80780f7",
+      "name": "Scan dran? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const requiredChannels = ['internal', 'beta'];\nconst tenantChannel = $('Aktive Tenants laden').item.json.channel || 'stable';\nreturn { json: { ...$json, channelGateOpen: requiredChannels.includes(tenantChannel) } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4208,
+        2048
+      ],
+      "id": "eff0c9ef-668c-4edd-a6a1-2e16d291de00",
+      "name": "Channel Gate: Termin-Radar"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d6aacf3b-46df-4861-bebf-1581685dfa9a",
+              "leftValue": "={{ $json.channelGateOpen }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4432,
+        2048
+      ],
+      "id": "67d384a9-c10a-4a43-b679-87267825eeef",
+      "name": "Channel Gate Offen? Termin-Radar"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $('Aktive Tenants laden').item.json.tenant_id }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4656,
+        2048
+      ],
+      "id": "119a328e-eed4-4a9c-a9a0-25573546dd84",
+      "name": "Graph Token (Wichtig)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "26f7cdfa-4a4a-41f9-a5e1-8e113e57b5e9",
+              "leftValue": "={{ $json.accessToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4880,
+        2048
+      ],
+      "id": "de9973f8-b191-4a7e-9d49-c1812514956f",
+      "name": "Token OK? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=\" + encodeURIComponent($now.setZone('Europe/Berlin').toISO()) + \"&endDateTime=\" + encodeURIComponent($now.setZone('Europe/Berlin').plus({ hours: 3 }).toISO()) + \"&$select=id,subject,start,end,attendees&$top=25\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Graph Token (Wichtig)').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5104,
+        2048
+      ],
+      "id": "a62a0fa2-4da8-430c-89f8-11a19d87fccc",
+      "name": "Kalenderdaten abrufen (Wichtig)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.value || [];\nreturn events.map(e => ({ json: {\n  eventId: e.id,\n  subject: e.subject || '(ohne Titel)',\n  start: e.start?.dateTime || null,\n  end: e.end?.dateTime || null,\n  attendees: (e.attendees || []).map(a => a.emailAddress?.address).filter(Boolean)\n} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        2048
+      ],
+      "id": "075ad784-d8fb-463f-8173-7bc99cf71a60",
+      "name": "Events entpacken (Wichtig)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        5552,
+        2128
+      ],
+      "id": "58c3ac3e-f0b5-453d-9e96-7e9312f12524",
+      "name": "Loop Wichtig Events"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_wichtig_sent (tenant_id, event_id)\nVALUES (\n  '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}',\n  '{{ $json.eventId.replace(/'/g, \"''\") }}'\n)\nON CONFLICT (tenant_id, event_id) DO NOTHING\nRETURNING event_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5776,
+        1520
+      ],
+      "id": "0f27de0d-0c3c-48e6-8529-5b6df866699e",
+      "name": "Wichtig Sent? (Wichtig)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7955de6f-a160-42b3-8045-1cbe60f90551",
+              "leftValue": "={{ $json.event_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6000,
+        1520
+      ],
+      "id": "d920a89c-5005-44a6-9a4b-ec8287a775f4",
+      "name": "Neu? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "function safeGet(fn, fallback) { try { return fn(); } catch (e) { return fallback; } }\nconst ev = $json;\nconst crmMatch = safeGet(() => $('CRM-Kontext laden (Wichtig)').first().json, {});\nconst hasMatch = !!(crmMatch.contactId || crmMatch.dealId || crmMatch.leadId);\nconst matchLabel = crmMatch.contactName || crmMatch.dealName || crmMatch.leadName || null;\nconst startLabel = ev.start ? new Date(ev.start).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Berlin' }) : 'unbekannt';\nconst systemPrompt = 'Du bist Jonas, ein AI Ops-Agent fuer Immobilienmakler. Beurteile EINEN Kalendertermin.'\n  + '\\nTermin: \"' + ev.subject + '\", Zeit: ' + startLabel\n  + '\\nExterne Teilnehmer erkannt: ' + (ev.attendees && ev.attendees.length ? 'ja (' + ev.attendees.length + ')' : 'nein')\n  + '\\nCRM-Treffer zu einem Teilnehmer vorhanden: ' + (hasMatch ? 'ja (' + matchLabel + ')' : 'nein')\n  + '\\n\\nIst dieser Termin fuer einen Immobilienmakler wichtig genug, um den Nutzer proaktiv per Telegram darauf hinzuweisen (z.B. Kundentermin, Besichtigung, Notartermin, Kaufvertrag — NICHT interne/private Termine, NICHT generische Blocker wie \"Mittagspause\")? '\n  + '\\n\\nGib AUSSCHLIESSLICH ein JSON-Objekt zurueck, keine weitere Erklaerung, kein Markdown: '\n  + '{\"important\": true|false, \"reason\": \"<max. 1 kurzer Satz Deutsch, Begruendung>\"}';\nreturn { json: { systemPrompt, userMessage: ev.subject, hasMatch, matchLabel, eventId: ev.eventId, subject: ev.subject, startLabel, telegram_chat_id: crmMatch.telegram_chat_id || null, tenant_id: crmMatch.tenant_id || null } };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7792,
+        1280
+      ],
+      "id": "1b1debaa-893e-44c4-b5b0-59023a234a40",
+      "name": "Wichtig-Beurteilung bauen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "maxTokens": "150",
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "={{ $json.userMessage }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "imageBase64",
+              "displayName": "imageBase64",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "imageMediaType",
+              "displayName": "imageMediaType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8016,
+        1280
+      ],
+      "id": "0700738a-916f-4638-a90f-2a6b9cbc93ad",
+      "name": "LLM Call (Wichtig)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.text || '';\nlet important = false, reason = '';\ntry {\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  const parsed = JSON.parse(raw.slice(start, end + 1));\n  important = parsed.important === true;\n  reason = parsed.reason || '';\n} catch (e) { }\nreturn { json: { important, reason } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8240,
+        1280
+      ],
+      "id": "e02a003b-d12d-46c4-9073-e05add65043a",
+      "name": "Wichtig-Antwort parsen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bc2fb830-be76-4f0e-a802-a7514a5abd8a",
+              "leftValue": "={{ $json.important }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        8464,
+        1280
+      ],
+      "id": "7b4c494b-14c9-442a-b1be-711d55da6222",
+      "name": "Ist wichtig?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "63797d53-2840-4c4e-86c0-d1a286018bed",
+              "leftValue": "={{ $('Wichtig-Beurteilung bauen').first().json.hasMatch }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        8688,
+        1280
+      ],
+      "id": "77dba691-3272-4b30-b790-11e1f6efde9a",
+      "name": "Hat CRM-Match?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Wichtig-Beurteilung bauen').first().json.telegram_chat_id }}",
+        "text": "={{ \"📌 Termin \\\"\" + $('Wichtig-Beurteilung bauen').first().json.subject + \"\\\" um \" + $('Wichtig-Beurteilung bauen').first().json.startLabel + \" Uhr. \" + $('Wichtig-Antwort parsen').first().json.reason }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        8912,
+        1520
+      ],
+      "id": "365c1802-0bb0-40cb-b40d-91728588f855",
+      "name": "Nachricht OHNE Rueckfrage",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_profile (tenant_id, key, value) VALUES\n  ('{{ $json.tenant_id.replace(/'/g, \"''\") }}', 'termin_radar_context_pending', 'true'),\n  ('{{ $json.tenant_id.replace(/'/g, \"''\") }}', 'termin_radar_context_event_id', '{{ $json.eventId.replace(/'/g, \"''\") }}'),\n  ('{{ $json.tenant_id.replace(/'/g, \"''\") }}', 'termin_radar_context_label', '{{ $json.matchLabel ? $json.matchLabel.replace(/'/g, \"''\") : \"\" }}'),\n  ('{{ $json.tenant_id.replace(/'/g, \"''\") }}', 'termin_radar_context_email', '{{ ($('Externe Teilnehmer filtern (Wichtig)').first().json.attendeeEmail || \"\").replace(/'/g, \"''\") }}')\nON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        9136,
+        1472
+      ],
+      "id": "7e393a72-c71b-4712-96b5-6c4c9d2213f2",
+      "name": "Termin-Radar-Context-Pending setzen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.messageText }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        9136,
+        1792
+      ],
+      "id": "9036dfb5-4d72-4ac0-abf5-3ec95e5da352",
+      "name": "Termin-Radar-Nachricht senden MIT Rueckfrage",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const domain = ($('Profil laden (Wichtig)').first().json.profile?.company_domain || '').toLowerCase().trim();\nconst attendees = $json.attendees || [];\nconst external = attendees.find(addr => {\n  const atDomain = (addr || '').toLowerCase().split('@')[1] || '';\n  return domain && atDomain && atDomain !== domain;\n});\nreturn { json: { ...$json, hasExternal: !!external, attendeeEmail: external || null } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6224,
+        1520
+      ],
+      "id": "f6d22103-55ad-4d64-ba9f-c1142045a99c",
+      "name": "Externe Teilnehmer filtern (Wichtig)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "95f0b06c-d1e7-42e0-9d13-3eca5c2d600b",
+              "leftValue": "={{ $json.hasExternal }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6448,
+        1520
+      ],
+      "id": "b5e2376a-f51c-4228-a9f7-a6c066957ab0",
+      "name": "Externer Teilnehmer gefunden? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}' AND provider = 'hubspot';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6672,
+        1216
+      ],
+      "id": "697df004-b831-431f-8403-a1ba2626d036",
+      "name": "HubSpot Token laden (Wichtig)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0323b03e-bbb4-436b-9ffd-61e2f08d267d",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6896,
+        1216
+      ],
+      "id": "8feb0d72-d756-48a6-9779-6d5ecbbc3954",
+      "name": "HubSpot aktiv? (Wichtig)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Wichtig)').first().json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $('Externe Teilnehmer filtern (Wichtig)').first().json.attendeeEmail }] }], properties: ['firstname','lastname','company'], limit: 1 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        7120,
+        1120
+      ],
+      "id": "75b933c3-0201-4ee6-b4c6-9d747ed5df95",
+      "name": "HubSpot Kontakt suchen (Wichtig)",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { skipped: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7120,
+        1312
+      ],
+      "id": "47325502-ef33-4fa5-8e51-cd0b6dcc161c",
+      "name": "HubSpot Uebersprungen (Wichtig)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        7344,
+        1216
+      ],
+      "id": "30ff85e7-effd-48eb-90f8-0b2793be3816",
+      "name": "Merge (Wichtig)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, company, notes\nFROM jonas_leads\nWHERE tenant_id = '{{ $('Aktive Tenants laden').item.json.tenant_id.replace(/'/g, \"''\") }}'\n  AND contact_info ILIKE '%' || '{{ $('Externe Teilnehmer filtern (Wichtig)').first().json.attendeeEmail.replace(/'/g, \"''\") }}' || '%'\nLIMIT 3",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        7120,
+        1600
+      ],
+      "id": "3f91fdc0-87d3-4963-add9-c5adc70fca1e",
+      "name": "Lead-Match laden (Wichtig)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeGet(fn, fallback) { try { return fn(); } catch (e) { return fallback; } }\nconst contactsRaw = safeGet(() => $('HubSpot Kontakt suchen (Wichtig)').first().json.results, []) || [];\nconst hubspotContact = contactsRaw[0] || null;\nconst leads = safeGet(() => $('Lead-Match laden (Wichtig)').all().map(i => i.json), []).filter(l => l && l.name);\nconst lead = leads[0] || null;\n\nconst contactId = hubspotContact ? hubspotContact.id : null;\nconst contactName = hubspotContact ? [hubspotContact.properties?.firstname, hubspotContact.properties?.lastname].filter(Boolean).join(' ') || hubspotContact.properties?.company || null : null;\nconst leadId = lead ? 'lead:' + lead.name : null;\nconst leadName = lead ? lead.name : null;\n\nconst telegramChatId = safeGet(() => $('Profil laden (Wichtig)').first().json.telegram_chat_id, null);\nconst tenantId = safeGet(() => $('Profil laden (Wichtig)').first().json.tenant_id, null);\n\nreturn [{ json: { contactId, contactName, dealId: null, dealName: null, leadId, leadName, telegram_chat_id: telegramChatId, tenant_id: tenantId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7568,
+        1280
+      ],
+      "id": "e24de5ed-07a4-4741-89e0-b79649130087",
+      "name": "CRM-Kontext laden (Wichtig)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const b = $('Wichtig-Beurteilung bauen').first().json;\nconst a = $('Wichtig-Antwort parsen').first().json;\nconst messageText = \"📌 Termin \\\"\" + b.subject + \"\\\" um \" + b.startLabel + \" Uhr. \" + a.reason + \" Soll ich dir Infos zu \" + b.matchLabel + \" raussuchen?\";\nreturn { json: { ...$json, messageText, eventId: b.eventId, matchLabel: b.matchLabel, telegram_chat_id: b.telegram_chat_id, tenant_id: b.tenant_id } };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8912,
+        1184
+      ],
+      "id": "99705f49-b46a-4381-b8ef-c0b735f380f8",
+      "name": "Termin-Radar-Nachricht bauen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "29ad726f-de82-4441-a057-877359ab0689",
+              "leftValue": "={{ $json.rn }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4432,
+        272
+      ],
+      "id": "28686035-d055-43ca-8833-a2f2231b98a0",
+      "name": "Draft noetig? (Top 5)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const l = $json;\nconst notesLine = l.notes ? `Notizen: ${l.notes}` : 'Notizen: (keine vorhanden)';\nconst langCode = (l.language || 'de').toLowerCase();\nconst systemPrompt = `Du entwirfst eine kurze, direkt kopierbare Nachfass-Nachricht (LinkedIn/Email) fuer einen faelligen Lead. Nutze AUSSCHLIESSLICH die folgenden Informationen -- erfinde keine Details, keine Zahlen, keine Zusagen die nicht genannt wurden.\\n\\nKontakt: ${l.name}${l.company ? ' (' + l.company + ')' : ''}\\n${notesLine}\\nUeberfaellig seit: ${l.overdue_days ?? 0} Tag(en)\\n\\nSchreibe eine kurze, freundliche, direkt versendbare Nachfass-Nachricht (2-4 Saetze) GENAU in der Sprache mit ISO-639-1-Code \\\"${langCode}\\\" -- dieser Code ist bereits bekannt (beim Erfassen des Kontakts ermittelt), nicht neu raten oder aus den Notizen ableiten. KEINE Anrede-Floskeln wie \\\"Sehr geehrte/r\\\", locker-professionell. Antworte NUR mit dem Nachrichtentext, keine Erklaerung, keine Anfuehrungszeichen drumherum.`;\nreturn { json: { name: l.name, company: l.company, priority: l.priority, overdue_days: l.overdue_days, systemPrompt } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4656,
+        272
+      ],
+      "id": "80148933-1df1-4a96-99de-d37744deb0fd",
+      "name": "FollowUp Draft Prompt bauen"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "maxTokens": "150",
+            "systemPrompt": "={{ $json.systemPrompt }}",
+            "userMessage": "Schreibe die Nachfass-Nachricht fuer diesen Lead."
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "imageBase64",
+              "displayName": "imageBase64",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "imageMediaType",
+              "displayName": "imageMediaType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4880,
+        272
+      ],
+      "id": "7f60da03-662b-4bf2-9a93-74981053185f",
+      "name": "LLM Call (FollowUp Draft)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('FollowUp Draft Prompt bauen').item.json;\nlet draft = null;\nif (!$json.error) {\n  const t = ($json.text || '').trim();\n  draft = t || null;\n}\nreturn { json: { name: src.name, company: src.company, priority: src.priority, overdue_days: src.overdue_days, draft } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5104,
+        272
+      ],
+      "id": "e5bd1623-f7dd-4f47-813d-a2efb956caf7",
+      "name": "FollowUp Draft parsen"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const l = $json;\nreturn { json: { name: l.name, company: l.company, priority: l.priority, overdue_days: l.overdue_days, draft: null } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5104,
+        464
+      ],
+      "id": "da0a8797-0469-4be0-a7ed-dcf439b78b1a",
+      "name": "FollowUp Kein Draft (Passthrough)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        272
+      ],
+      "id": "00a0d06c-cfb3-4280-8521-ace2f32845f0",
+      "name": "FollowUp Leads zusammenfuehren"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Over Items (Weekly)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items (FollowUp)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Follow-Up Guard Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-Up Guard Gate": {
+      "main": [
+        [
+          {
+            "node": "Stunde erreicht? (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stunde erreicht? (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Follow-Up Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-Up Sent?": {
+      "main": [
+        [
+          {
+            "node": "Heute schon? (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Heute schon? (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token laden (FollowUp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Leads Stale laden (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot aktiv? (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot aktiv? (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Deals suchen (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Uebersprungen (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Deals suchen (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Merge (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Uebersprungen (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Merge (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leads Stale laden (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Draft noetig? (Top 5)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Follow-Up Guard formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-Up Guard formatieren": {
+      "main": [
+        [
+          {
+            "node": "Etwas zu melden? (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Etwas zu melden? (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Telegram senden (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram senden (FollowUp)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (FollowUp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items (Weekly)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Weekly Review Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Review Gate": {
+      "main": [
+        [
+          {
+            "node": "Zeit erreicht? (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zeit erreicht? (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Weekly Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Sent?": {
+      "main": [
+        [
+          {
+            "node": "Diese Woche schon? (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diese Woche schon? (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Erledigte Memory laden (Weekly)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HubSpot Token laden (Weekly)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Neue Leads laden (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot aktiv? (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot aktiv? (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Deals suchen (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Uebersprungen (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erledigte Memory laden (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Deals suchen (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Weekly)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HubSpot Uebersprungen (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Weekly)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Neue Leads laden (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Weekly)",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Weekly Review formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Review formatieren": {
+      "main": [
+        [
+          {
+            "node": "Telegram senden (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram senden (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items (PreMeeting)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Pre-Meeting Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-Meeting Gate": {
+      "main": [
+        [
+          {
+            "node": "Aktiv & Domain gesetzt?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktiv & Domain gesetzt?": {
+      "main": [
+        [
+          {
+            "node": "Graph Token (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Token OK? (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token OK? (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Kalenderdaten abrufen (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalenderdaten abrufen (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Events entpacken (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events entpacken (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Externe Meetings filtern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externe Meetings filtern": {
+      "main": [
+        [
+          {
+            "node": "Externes Meeting gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externes Meeting gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Premeeting Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Premeeting Sent?": {
+      "main": [
+        [
+          {
+            "node": "Schon gesendet? (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schon gesendet? (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Email-Cache laden (PreMeeting)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HubSpot Token laden (PreMeeting)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lead-Match laden (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot aktiv? (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot aktiv? (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt suchen (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Uebersprungen (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email-Cache laden (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Merge (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt suchen (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Merge (PreMeeting)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HubSpot Uebersprungen (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Merge (PreMeeting)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Lead-Match laden (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Merge (PreMeeting)",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Pre-Meeting Kontext bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-Meeting Kontext bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Pre-Meeting Reply formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pre-Meeting Reply formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-Meeting Reply formatieren": {
+      "main": [
+        [
+          {
+            "node": "Telegram senden (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram senden (PreMeeting)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (PreMeeting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items (AbendRecap)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Abend-Recap Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Recap Gate": {
+      "main": [
+        [
+          {
+            "node": "Stunde erreicht? (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stunde erreicht? (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Abend-Recap Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Recap Sent?": {
+      "main": [
+        [
+          {
+            "node": "Heute schon? (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Heute schon? (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Miss-Streak berechnen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Miss-Streak berechnen": {
+      "main": [
+        [
+          {
+            "node": "Auto-Abschalten?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Abschalten?": {
+      "main": [
+        [
+          {
+            "node": "Abend-Recap Deaktivieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Channel Gate: Abend-Recap Smarter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Recap Deaktivieren": {
+      "main": [
+        [
+          {
+            "node": "Abschalt-Nachricht senden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abschalt-Nachricht senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abschalt-Nachricht senden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Recap Frage-Status setzen": {
+      "main": [
+        [
+          {
+            "node": "Abend-Frage senden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abend-Frage senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Frage senden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Gate: Abend-Recap Smarter": {
+      "main": [
+        [
+          {
+            "node": "Channel Gate Offen? Abend-Recap Smarter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Gate Offen? Abend-Recap Smarter": {
+      "main": [
+        [
+          {
+            "node": "Faellige Memory laden (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abend-Recap Frage bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Faellige Memory laden (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Graph Token (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Token OK? (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token OK? (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Kalenderdaten abrufen (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abend-Recap Frage bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events entpacken (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Abend-Recap Frage bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalenderdaten abrufen (AbendRecap)": {
+      "main": [
+        [
+          {
+            "node": "Events entpacken (AbendRecap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abend-Recap Frage bauen": {
+      "main": [
+        [
+          {
+            "node": "Abend-Recap Frage-Status setzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Termin-Radar Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Profil laden (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Termin-Radar Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin-Radar Gate": {
+      "main": [
+        [
+          {
+            "node": "Feature aktiv? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feature aktiv? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Scan-Rhythmus Gate (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan-Rhythmus Gate (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Scan dran? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan dran? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Channel Gate: Termin-Radar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Gate: Termin-Radar": {
+      "main": [
+        [
+          {
+            "node": "Channel Gate Offen? Termin-Radar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Gate Offen? Termin-Radar": {
+      "main": [
+        [
+          {
+            "node": "Graph Token (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Token (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Token OK? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token OK? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Kalenderdaten abrufen (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kalenderdaten abrufen (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Events entpacken (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events entpacken (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Wichtig Events": {
+      "main": [
+        [
+          {
+            "node": "Loop Termin-Radar Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wichtig Sent? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wichtig Sent? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Neu? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wichtig-Beurteilung bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Wichtig-Antwort parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wichtig-Antwort parsen": {
+      "main": [
+        [
+          {
+            "node": "Ist wichtig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ist wichtig?": {
+      "main": [
+        [
+          {
+            "node": "Hat CRM-Match?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hat CRM-Match?": {
+      "main": [
+        [
+          {
+            "node": "Termin-Radar-Nachricht bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nachricht OHNE Rueckfrage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nachricht OHNE Rueckfrage": {
+      "main": [
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neu? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Externe Teilnehmer filtern (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin-Radar-Context-Pending setzen": {
+      "main": [
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin-Radar-Nachricht senden MIT Rueckfrage": {
+      "main": [
+        [
+          {
+            "node": "Loop Wichtig Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externe Teilnehmer filtern (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Externer Teilnehmer gefunden? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Externer Teilnehmer gefunden? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token laden (Wichtig)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lead-Match laden (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM-Kontext laden (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot aktiv? (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt suchen (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Uebersprungen (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Uebersprungen (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt suchen (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot aktiv? (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead-Match laden (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Wichtig)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "CRM-Kontext laden (Wichtig)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM-Kontext laden (Wichtig)": {
+      "main": [
+        [
+          {
+            "node": "Wichtig-Beurteilung bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termin-Radar-Nachricht bauen": {
+      "main": [
+        [
+          {
+            "node": "Termin-Radar-Context-Pending setzen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Termin-Radar-Nachricht senden MIT Rueckfrage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft noetig? (Top 5)": {
+      "main": [
+        [
+          {
+            "node": "FollowUp Draft Prompt bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FollowUp Kein Draft (Passthrough)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FollowUp Draft Prompt bauen": {
+      "main": [
+        [
+          {
+            "node": "LLM Call (FollowUp Draft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call (FollowUp Draft)": {
+      "main": [
+        [
+          {
+            "node": "FollowUp Draft parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FollowUp Draft parsen": {
+      "main": [
+        [
+          {
+            "node": "FollowUp Leads zusammenfuehren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FollowUp Kein Draft (Passthrough)": {
+      "main": [
+        [
+          {
+            "node": "FollowUp Leads zusammenfuehren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FollowUp Leads zusammenfuehren": {
+      "main": [
+        [
+          {
+            "node": "Merge (FollowUp)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

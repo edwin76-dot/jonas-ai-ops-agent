@@ -1,0 +1,266 @@
+{
+  "id": "IuwT9V7j6mkg8Foz",
+  "name": "Get Valid Graph Token",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "tenantId"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -288
+      ],
+      "id": "1aeaaa2c-1e39-4887-8750-b3720bc595c7",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS access_token,\n  pgp_sym_decrypt(refresh_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS refresh_token,\n  expires_at\nFROM tenant_credentials\nWHERE tenant_id = '{{ $json.tenantId.replace(/'/g, \"''\") }}' AND provider = 'outlook'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        -288
+      ],
+      "id": "355ab43e-d6cc-45f4-b4e7-38facb3626bb",
+      "name": "Token laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ec3391aa-a11e-4662-9594-308ebed15d11",
+              "leftValue": "={{ new Date($json.expires_at) < new Date(Date.now() + 2*60*1000) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        -288
+      ],
+      "id": "14fb9584-5389-4e88-88c7-9fc48f104d2c",
+      "name": "Bald abgelaufen?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $env.AZURE_CLIENT_ID }}"
+            },
+            {
+              "name": "client_secret",
+              "value": "={{ $env.AZURE_CLIENT_SECRET }}"
+            },
+            {
+              "name": "refresh_token",
+              "value": "={{ $json.refresh_token }}"
+            },
+            {
+              "name": "grant_type",
+              "value": "refresh_token"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        -384
+      ],
+      "id": "a4f05451-a23a-4ea3-999d-565ef069a438",
+      "name": "Token Refresh",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tenant_credentials\nSET\n  access_token = pgp_sym_encrypt('{{ $json.access_token.replace(/'/g, \"''\") }}', '{{ $env.TENANT_TOKEN_SECRET }}'),\n  refresh_token = pgp_sym_encrypt('{{ $json.refresh_token.replace(/'/g, \"''\") }}', '{{ $env.TENANT_TOKEN_SECRET }}'),\n  expires_at = NOW() + INTERVAL '{{ $json.expires_in }} seconds',\n  updated_at = NOW()\nWHERE tenant_id = '{{ $('When Executed by Another Workflow').first().json.tenantId.replace(/'/g, \"''\") }}' AND provider = 'outlook'\nRETURNING access_token IS NOT NULL AS success;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        -464
+      ],
+      "id": "3386b37a-20de-4b32-8173-75f596b4f01f",
+      "name": "Refreshed Token speichern",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { accessToken: $json.access_token } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -192
+      ],
+      "id": "042ac350-9776-44cc-8d2f-0512ab924544",
+      "name": "Bestehenden Token zurückgeben"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { accessToken: $('Token Refresh').first().json.access_token } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -512
+      ],
+      "id": "ee7294e6-e61f-48f1-9867-7fb4502d3bde",
+      "name": "Refreshed Token zurückgeben"
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorMsg = $json.error?.message || $json.error || 'Token-Refresh fehlgeschlagen';\nreturn [{ json: { accessToken: null, error: errorMsg } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -288
+      ],
+      "id": "269198b1-0018-4eb6-a8b8-c3c95fb7778a",
+      "name": "Token Fehler"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Token laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token laden": {
+      "main": [
+        [
+          {
+            "node": "Bald abgelaufen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bald abgelaufen?": {
+      "main": [
+        [
+          {
+            "node": "Token Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bestehenden Token zurückgeben",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token Refresh": {
+      "main": [
+        [
+          {
+            "node": "Refreshed Token speichern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Token Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refreshed Token speichern": {
+      "main": [
+        [
+          {
+            "node": "Refreshed Token zurückgeben",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Token Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

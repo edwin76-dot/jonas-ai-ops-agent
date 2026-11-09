@@ -1,0 +1,83 @@
+{
+  "id": "huzRkLX85bTYRtkE",
+  "name": "Error-Handler-Workflow",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "bb6127e9-6e0b-4477-8e43-5c0bd4f0a1b4",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorData = $input.first().json;\n\nconst workflowName = errorData.workflow?.name || \"Unbekannter Workflow\";\nconst nodeName = errorData.execution?.lastNodeExecuted || \"Unbekannter Node\";\nconst errorMessage = errorData.execution?.error?.message || \"Keine Fehlermeldung verfuegbar\";\nconst timestamp = new Date().toLocaleString(\"de-DE\", { timeZone: \"Europe/Berlin\" });\nconst executionUrl = errorData.execution?.url || \"\";\n\n// Tenant ist aktuell immer 'default' (Single-Tenant), aber Feld ist\n// schon vorbereitet fuer Multi-Tenant-Skalierung (siehe Doku)\nconst tenantId = \"default\";\n\nconst text = `⚠️ Fehler bei Tenant \"${tenantId}\"\\n` +\n  `Workflow: \"${workflowName}\"\\n` +\n  `Node: ${nodeName}\\n` +\n  `Fehler: ${errorMessage}\\n` +\n  `Zeit: ${timestamp}` +\n  (executionUrl ? `\\nDetails: ${executionUrl}` : \"\");\n\nreturn [{ json: { text, tenantId } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e1b5c945-c08d-4c87-a316-5ae95480bf8d",
+      "name": "Error formatieren"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        0
+      ],
+      "id": "1bf5493e-8903-41de-98fc-5d35e148f794",
+      "name": "Send a text message",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Error Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error formatieren": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

@@ -1,0 +1,1533 @@
+{
+  "id": "JUz0ULveQzqyKjYH",
+  "name": "email triage v2 (Privat-Geschaeftlich-Gate)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -13136,
+        608
+      ],
+      "id": "fd85ec7f-9c7e-4664-aea8-022fc59be6c9",
+      "name": "Minütlicher Poll"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EMAIL TRIAGE — Node 1: Bereinigung (robust)\n// ============================================\n\nconst mail = $input.first().json;\n\n// ---------- HELFER: Absender-Adresse finden ----------\nfunction findSenderAddress(m) {\n  const candidates = [\n    m?.from?.emailAddress?.address,\n    m?.sender?.emailAddress?.address,\n    m?.from?.address,\n    m?.sender?.address,\n    m?.fromAddress,\n    typeof m?.from === \"string\" ? m.from : null,\n    typeof m?.sender === \"string\" ? m.sender : null,\n  ];\n  for (const c of candidates) {\n    if (typeof c === \"string\" && c.includes(\"@\")) return c.trim();\n  }\n  return \"\";\n}\n\nfunction findSenderName(m) {\n  const candidates = [\n    m?.from?.emailAddress?.name,\n    m?.sender?.emailAddress?.name,\n    m?.from?.name,\n  ];\n  for (const c of candidates) {\n    if (typeof c === \"string\" && c.trim()) return c.trim();\n  }\n  return \"\";\n}\n\n// ---------- FELDER ----------\nconst subject    = mail.subject || \"(kein Betreff)\";\nconst sender     = findSenderAddress(mail);\nconst senderName = findSenderName(mail) || sender || \"Unbekannt\";\nconst rawBody    = mail.body?.content || mail.bodyPreview || \"\";\n\n// ---------- HTML ENTFERNEN ----------\nlet cleanBody = rawBody\n  .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, \" \")\n  .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, \" \")\n  .replace(/<[^>]+>/g, \" \")\n  .replace(/&nbsp;/g, \" \")\n  .replace(/&amp;/g, \"&\")\n  .replace(/&lt;/g, \"<\")\n  .replace(/&gt;/g, \">\")\n  .replace(/&quot;/g, '\"')\n  .replace(/&#39;/g, \"'\")\n  .replace(/\\s+/g, \" \")\n  .trim();\n\n// ---------- ZITIERTEN VERLAUF ABSCHNEIDEN ----------\nconst cutoffs = [\n  /Von:\\s.*Gesendet:/i,\n  /-----Ursprüngliche Nachricht-----/i,\n  /On .* wrote:/i,\n  /Am .* schrieb .*:/i,\n];\nfor (const pattern of cutoffs) {\n  const match = cleanBody.match(pattern);\n  if (match) {\n    cleanBody = cleanBody.slice(0, match.index).trim();\n    break;\n  }\n}\n\ncleanBody = cleanBody.slice(0, 1500);\nif (!cleanBody) cleanBody = \"(kein lesbarer Inhalt)\";\n\nconst debugFrom = JSON.stringify(mail.from || mail.sender || {});\n\nreturn [{\n  json: {\n    subject,\n    sender,\n    senderName,\n    cleanBody,\n    mailId: mail.id,\n    receivedAt: mail.receivedDateTime,\n    tenant_id: mail.tenant_id,\n    telegram_chat_id: mail.telegram_chat_id,\n    _debugFrom: debugFrom,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10896,
+        272
+      ],
+      "id": "584ba59c-2bb6-4d2b-a251-41968e5475da",
+      "name": "Mail bereinigen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EMAIL TRIAGE — Node 3: Claude-Antwort parsen\n// ============================================\nconst apiResponse = $input.first().json;\nconst raw = apiResponse.text || '';\nlet parsed;\ntry {\n  const clean = raw.replace(/```json|```/g, '').trim();\n  const start = clean.indexOf('{');\n  const end   = clean.lastIndexOf('}');\n  parsed = JSON.parse(clean.slice(start, end + 1));\n} catch (e) {\n  parsed = {\n    kategorie: 'NORMAL',\n    zusammenfassung: raw.slice(0, 120) || 'Konnte nicht analysiert werden',\n    antwort_noetig: true,\n    draft: raw,\n  };\n}\nconst orig = $('Mail bereinigen').item.json;\nlet kategorie      = parsed.kategorie || 'NORMAL';\nlet antwort_noetig = parsed.antwort_noetig !== false;\n// 22.10.2026 -- Automail-Guard: LEAD von System-/noreply-Absendern ist nie ein echter Lead (deterministisch, nicht nur dem LLM ueberlassen).\nconst AUTO_SENDER = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|newsletter|mailer-daemon|postmaster|bounces?|alerts?)([@+._-]|$)/i;\nconst senderLocal = String(orig.sender || '').split('@')[0];\nconst autoSenderDowngrade = kategorie === 'LEAD' && AUTO_SENDER.test(senderLocal);\nif (autoSenderDowngrade) { kategorie = 'INFO'; antwort_noetig = false; }\n// 24.09.2026 -- Privat/Geschaeftlich-Gate: dieses Postfach wird fuer beides genutzt.\n// autoSendOk wird HIER deterministisch berechnet, nicht dem LLM allein ueberlassen --\n// gleiches Prinzip wie bei den Wochentag-Fixes: sicherheitskritische UND-Bedingung nie\n// nur dem LLM-Output vertrauen.\nconst bereich = parsed.bereich === 'geschaeftlich' ? 'geschaeftlich' : 'privat';\nconst autoSendOk = !autoSenderDowngrade && bereich === 'geschaeftlich' && parsed.routine === true;\nconst shouldPush =\n  kategorie === 'WICHTIG' ||\n  kategorie === 'LEAD' ||\n  (kategorie === 'NORMAL' && antwort_noetig === true);\nreturn [{\n  json: {\n    kategorie,\n    zusammenfassung: parsed.zusammenfassung || '',\n    antwort_noetig,\n    draft:           autoSenderDowngrade ? '' : (parsed.draft || ''),\n    bereich,\n    autoSendOk,\n    subject:         orig.subject,\n    sender:          orig.sender,\n    senderName:      orig.senderName,\n    mailId:          orig.mailId,\n    tenant_id:        orig.tenant_id,\n    telegram_chat_id: orig.telegram_chat_id,\n    shouldPush\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10224,
+        272
+      ],
+      "id": "ec27c14e-c881-4f54-af10-8c8197ca2937",
+      "name": "Claude Output parsen"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "31ee0215-7bfb-4f38-88c1-86b90d45ce5f",
+              "leftValue": "={{ $json.kategorie }}",
+              "rightValue": "LEAD",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -10000,
+        -432
+      ],
+      "id": "951f0a94-0173-4720-8897-287ce10b1753",
+      "name": "LEAD Check"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9bc700c2-b085-49ba-992d-6d5327d487d8",
+              "leftValue": "={{ $json.antwort_noetig }}",
+              "rightValue": "is true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -10000,
+        128
+      ],
+      "id": "bbb8aa9b-7a40-485f-bd99-e4a99192c01b",
+      "name": "Antwort nötig?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_email_recent\n  (tenant_id, kategorie, zusammenfassung, draft_erstellt, sender)\nVALUES\n  ('{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}',\n   '{{ $('Claude Output parsen').item.json.kategorie.replace(/'/g, \"''\") }}',\n   '{{ $('Claude Output parsen').item.json.zusammenfassung.replace(/'/g, \"''\") }}',\n   {{ ($('Claude Output parsen').item.json.antwort_noetig === true || $('Claude Output parsen').item.json.antwort_noetig === 'true') ? 'true' : 'false' }},\n   '{{ $('Claude Output parsen').item.json.sender.replace(/'/g, \"''\") }}')",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -10000,
+        384
+      ],
+      "id": "803a28c9-5647-4ddf-8a85-0ea436053930",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b716764f-201c-4803-90d0-d8219ee03235",
+              "leftValue": "={{ $('Claude Output parsen').item.json.shouldPush }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9328,
+        32
+      ],
+      "id": "80e09849-9894-4b03-abe2-feb274aed5d1",
+      "name": "Push noetig?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0a1cc939-c794-4118-89d1-5949da780db5",
+              "leftValue": "={{ $('Claude Output parsen').item.json.shouldPush }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9328,
+        320
+      ],
+      "id": "174d6d0f-f5b1-446c-a2a0-bd3177725a2d",
+      "name": "Push noetig?2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Claude Output parsen').item.json.telegram_chat_id }}",
+        "text": "=📬 Neue Mail von {{ $('Claude Output parsen').item.json.senderName }}\n🏷 Kategorie: {{ $('Claude Output parsen').item.json.kategorie }}\n📝 {{ $('Claude Output parsen').item.json.zusammenfassung }}\n{{ $('Claude Output parsen').item.json.autoSendOk ? \"✅ Automatisch beantwortet\" : \"✏️ Entwurf liegt in Outlook bereit\" }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -9104,
+        -64
+      ],
+      "id": "7ba0f228-2e39-4262-a648-6e8e7e15a86a",
+      "name": "Telegram an Jonas (Entwurf bereit)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Claude Output parsen').item.json.telegram_chat_id }}",
+        "text": "=📬 Neue Mail von {{ $('Claude Output parsen').item.json.senderName }}\n🏷 Kategorie: {{ $('Claude Output parsen').item.json.kategorie }}\n📝 {{ $('Claude Output parsen').item.json.zusammenfassung }}\nℹ️ Keine Antwort nötig — kein Entwurf erstellt",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -9104,
+        384
+      ],
+      "id": "b60c2d05-02c2-46be-9efc-9c1ad10eda5d",
+      "name": "Telegram an Jonas (keine Antwort)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qTshTA8Xy9kFBrPj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qTshTA8Xy9kFBrPj",
+          "cachedResultName": "LLM Call"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "systemPrompt": "={{ \"Du bist ein professioneller Executive Assistant. Analysiere die E-Mail unten und antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt. Kein Markdown, keine Code-Fences, keine Erklärung davor oder danach.\\n\\nFormat (exakt diese Keys):\\n\" + '{\"kategorie\":\"WICHTIG|NORMAL|SPAM|INFO|LEAD\",\"bereich\":\"privat|geschaeftlich\",\"routine\":false,\"zusammenfassung\":\"max 1 Satz\",\"antwort_noetig\":true,\"absender_name\":\"Vorname Nachname oder leerer String\",\"draft\":\"Antwortentwurf auf Deutsch\"}' + \"\\n\\nRegeln zur Namens-Extraktion (absender_name):\\n1. Suche den echten Namen der Person in dieser Reihenfolge: (a) E-Mail-Signatur am Ende, (b) Grußformel wie 'Mit freundlichen Grüßen, ...', (c) Anrede oder Selbstvorstellung im Text.\\n2. WEITERGELEITETE MAIL: Enthält der Inhalt Header wie 'Von:', 'From:', 'Gesendet:' oder 'Weitergeleitet', dann ist die relevante Person der URSPRÜNGLICHE Absender - NICHT die Person, die weitergeleitet hat. Nimm den Namen aus der 'Von:'-Zeile.\\n3. Findest du nur eine E-Mail-Adresse und keinen Klarnamen, lasse absender_name leer ('').\\n4. Rate niemals einen Namen. Lieber leer als falsch.\\n\\nKategorien:\\n- WICHTIG: Persönliche oder dringende Mails die eine Antwort brauchen (Arzt, Bank, Behörden, Familie, Freunde).\\n- NORMAL: Allgemeine Mails ohne besonderen Druck.\\n- SPAM: Werbung, Massenmail, kein echter Absender.\\n- INFO: Automatische Benachrichtigungen, Bestätigungen, Newsletter.\\n- LEAD: Jemand äußert Interesse an Dienstleistungen, fragt nach Preisen, möchte eine Zusammenarbeit anfragen oder signalisiert geschäftliches Interesse. LEAD hat immer antwort_noetig = true. NICHT LEAD sind automatisch erzeugte Mails (noreply-/Benachrichtigungs-Absender, Newsletter, Jobportale, Stellenangebote, Bewerbungsplattformen, Systemmeldungen, Marketing-Mails) -- diese sind INFO oder SPAM, auch wenn sie Dienstleistungen bewerben. LEAD nur, wenn eine echte Person persoenlich Interesse zeigt.\\n\\nBereich (WICHTIG -- dieses Postfach wird PRIVAT UND GESCHAEFTLICH genutzt, beides landet im selben Postfach):\\n- 'privat': persoenliche Mails an/ueber den Postfach-Inhaber selbst (Familie, Freunde, eigener Arzt/Bank/Behoerdenkontakt, private Bestellungen).\\n- 'geschaeftlich': alles was mit dem Geschaeft, Kunden, Leads oder der Agentur zu tun hat.\\n- Im Zweifel, wenn nicht eindeutig zuordenbar: 'privat' waehlen -- lieber vorsichtig als eine private Mail faelschlich als geschaeftlich behandeln.\\n\\nRoutine (steuert ob Jonas SELBSTSTAENDIG antworten darf statt nur einen Entwurf zu bauen -- nur bei bereich='geschaeftlich' ueberhaupt relevant):\\n- routine:true NUR wenn ALLE drei zutreffen: (1) bereich ist 'geschaeftlich', (2) die Antwort ist eine einfache, risikofreie Bestaetigung oder Beantwortung einer klaren Frage (z.B. Terminbestaetigung, 'ja das passt', simple Rueckfrage beantworten), (3) der Entwurf enthaelt KEINE Preise, Konditionen, neuen Zusagen, Vertragsdetails oder verbindlichen Aussagen.\\n- Bei bereich='privat' IMMER routine:false, ausnahmslos -- Jonas antwortet NIE selbststaendig auf private Mails.\\n- Im Zweifel IMMER routine:false -- lieber ein Entwurf zu viel vorbereitet als eine Mail faelschlich automatisch verschickt.\\n\\nWeitere Regeln:\\n- Newsletter, Spam, automatische Benachrichtigungen: antwort_noetig = false und draft = ''.\\n- Wenn absender_name bekannt ist, beginne den Draft mit persönlicher Anrede ('Hallo [Vorname], ...').\\n- Beende jeden Draft immer mit dieser Signatur (exakt so):\\n\\nMit freundlichen Grüßen,\\n\" + ($('Profil laden (EmailTriage)').item.json.profile?.name || '') + \"\" }}",
+            "userMessage": "={{ \"Absender (technisch): \" + $('Mail bereinigen').first().json.senderName + \" (\" + $('Mail bereinigen').first().json.sender + \")\\n\" + \"Betreff: \" + $('Mail bereinigen').first().json.subject + \"\\n\" + \"Inhalt: \" + $('Mail bereinigen').first().json.cleanBody }}",
+            "maxTokens": "400"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "systemPrompt",
+              "displayName": "systemPrompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "userMessage",
+              "displayName": "userMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "maxTokens",
+              "displayName": "maxTokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -10448,
+        272
+      ],
+      "id": "cc5bacbb-b774-4e3f-b6a7-1a3b53703d22",
+      "name": "LLM Call"
+    },
+    {
+      "parameters": {
+        "jsCode": "const mails = $json.value || [];\nreturn mails.map(m => ({ json: m }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11344,
+        272
+      ],
+      "id": "bea4b0c7-6985-4766-840e-f6ae979fb4b4",
+      "name": "Mails extrahieren"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IuwT9V7j6mkg8Foz",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IuwT9V7j6mkg8Foz",
+          "cachedResultName": "Get Valid Graph Token"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenantId": "={{ $json.tenant_id }}"
+          },
+          "matchingColumns": [
+            "tenantId"
+          ],
+          "schema": [
+            {
+              "id": "tenantId",
+              "displayName": "tenantId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -11792,
+        272
+      ],
+      "id": "e41c19be-2bec-46e1-ad0f-0de577f38879",
+      "name": "Get Valid Graph Token"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=20",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -11568,
+        272
+      ],
+      "id": "169414f9-2f02-4791-85c2-53389cbc6507",
+      "name": "Ungelesene Mails holen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/messages/\" + $('Mail bereinigen').item.json.mailId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ isRead: true }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8880,
+        288
+      ],
+      "id": "6b011867-3c11-4122-94e9-99fbc9ad7833",
+      "name": "Mail als gelesen markieren",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  subject: \"Re: \" + $json.subject,\n  body: { contentType: \"Text\", content: $json.draft },\n  toRecipients: [{ emailAddress: { address: $json.sender } }]\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -9552,
+        128
+      ],
+      "id": "740a37fd-6c94-44b1-9777-feffe50e7af3",
+      "name": "Outlook Entwurf erstellen",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.tenant_id, t.telegram_chat_id\nFROM tenants t\nJOIN tenant_credentials tc ON tc.tenant_id = t.tenant_id\nWHERE t.status = 'active' AND tc.provider = 'outlook'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -12240,
+        608
+      ],
+      "id": "cb0e3ef6-5dd0-49c4-aa88-fd53a254b744",
+      "name": "Aktive Tenants laden",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -12016,
+        608
+      ],
+      "id": "fa0c260a-f1b6-4f68-bef2-584507fb340c",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_email_triage_lock\nSET running = false\nWHERE id = 1 AND running = true AND started_at < NOW() - INTERVAL '5 minutes';\n\nSELECT running FROM jonas_email_triage_lock WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -12912,
+        608
+      ],
+      "id": "8292a45a-c6f7-4f31-9cc6-0fd039cec11f",
+      "name": "Lock prüfen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4dd2e9f8-d45d-4ab6-9509-9c8ed058515e",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -12688,
+        608
+      ],
+      "id": "35563d17-dc3a-4545-987f-8a97eed1bf96",
+      "name": "Läuft schon?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_email_triage_lock SET running = false WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -11792,
+        576
+      ],
+      "id": "9b9b937a-e639-4e29-99e6-4dbe25da4eef",
+      "name": "Lock freigeben",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const tenantId = $('Loop Over Items').item.json.tenant_id;\nconst chatId = $('Loop Over Items').item.json.telegram_chat_id;\n\nreturn $input.all().map(item => ({\n  json: {\n    ...item.json,\n    tenant_id: tenantId,\n    telegram_chat_id: chatId\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11120,
+        272
+      ],
+      "id": "e397af6e-e498-4580-aec3-98d470fe5267",
+      "name": "Tenant-Kontext anhängen"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_email_triage_lock SET running = true, started_at = NOW() WHERE id = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -12464,
+        608
+      ],
+      "id": "71a155e6-c7c6-4e3b-8b5c-300a20f51594",
+      "name": "Lock setzen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_object_agg(key, value) AS profile FROM jonas_profile WHERE tenant_id = '{{ $('Loop Over Items').item.json.tenant_id.replace(/'/g, \"''\") }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -10672,
+        272
+      ],
+      "id": "63b608bf-ed6e-4d22-9dbe-261a6387f68f",
+      "name": "Profil laden (EmailTriage)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pgp_sym_decrypt(access_token, '{{ $env.TENANT_TOKEN_SECRET }}') AS token\nFROM tenant_credentials\nWHERE tenant_id = '{{ $json.tenant_id.replace(/'/g, \"''\") }}'\n  AND provider = 'hubspot'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -9776,
+        -336
+      ],
+      "id": "1b4b434b-465f-4af1-b698-17494856f242",
+      "name": "HubSpot Token laden (Lead)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b2f6a7c3-2d4e-5f6a-0b1c-2d3e4f5a6b7c",
+              "leftValue": "={{ $json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9552,
+        -336
+      ],
+      "id": "11b5c138-c50d-4938-a800-64eb117b13b9",
+      "name": "HubSpot Token OK? (Lead)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Lead)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { email: $('Mail bereinigen').item.json.sender, firstname: $('Mail bereinigen').item.json.senderName } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8880,
+        -400
+      ],
+      "id": "fb17ce67-143d-4882-944a-49aa115be872",
+      "name": "HubSpot Kontakt anlegen (Lead)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Lead)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    dealname: $('Mail bereinigen').item.json.subject,\n    dealstage: 'appointmentscheduled',\n    pipeline: 'default'\n  },\n  associations: $json.contactId ? [{\n    to: { id: $json.contactId },\n    types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 }]\n  }] : []\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8432,
+        -336
+      ],
+      "id": "abcc8f4f-8eee-44d4-a3ba-b3781c9ecd68",
+      "name": "HubSpot Deal anlegen (Lead)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, priority FROM jonas_leads\nWHERE tenant_id = '{{ $json.tenant_id.replace(/'/g, \"''\") }}'\n  AND contact_info ILIKE '%' || NULLIF('{{ $json.sender.replace(/'/g, \"''\") }}', '') || '%'\n  AND next_followup_at IS NOT NULL\nLIMIT 1",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -10000,
+        576
+      ],
+      "id": "074d0244-bea5-4ae2-8c22-0238544815a6",
+      "name": "Lead-Match pruefen (EmailTriage)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "888ed5ae-b511-4f35-9cf8-13a8d3b3e822",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9776,
+        576
+      ],
+      "id": "e408c150-6feb-4a8a-a08c-dd64253ec540",
+      "name": "Lead-Match gefunden? (EmailTriage)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jonas_leads\nSET next_followup_at = CASE priority\n  WHEN 'A' THEN NOW() + INTERVAL '2 days'\n  WHEN 'B' THEN NOW() + INTERVAL '7 days'\n  WHEN 'C' THEN NOW() + INTERVAL '28 days'\n  ELSE NULL\nEND,\nupdated_at = NOW()\nWHERE id = '{{ $json.id }}'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -9552,
+        576
+      ],
+      "id": "540e5217-9ed7-485e-a048-051fe8e96f42",
+      "name": "Follow-up neu berechnen (EmailTriage)",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jonas_profile (tenant_id, key, value) VALUES\n  ('{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}', 'email_lead_pending', 'true'),\n  ('{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}', 'email_lead_proposed_name', '{{ $('Claude Output parsen').item.json.senderName.replace(/'/g, \"''\") }}'),\n  ('{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}', 'email_lead_proposed_contact', '{{ $('Claude Output parsen').item.json.sender.replace(/'/g, \"''\") }}'),\n  ('{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}', 'email_lead_proposed_notes', '{{ ($('Claude Output parsen').item.json.zusammenfassung + \" (Betreff: \" + $('Claude Output parsen').item.json.subject + \")\").replace(/'/g, \"''\") }}')\nON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -9328,
+        -624
+      ],
+      "id": "e8e9de98-dd21-451b-a25f-1076e897f3fc",
+      "name": "Email-Lead Pending setzen",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Claude Output parsen').item.json.telegram_chat_id }}",
+        "text": "=📧 Neue Mail von {{ $('Claude Output parsen').item.json.senderName }} ({{ $('Claude Output parsen').item.json.sender }}) — als Lead eintragen? (ja/nein)",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -9104,
+        -624
+      ],
+      "id": "8e1459eb-7fed-40df-8703-09a217f469f4",
+      "name": "Telegram Email-Lead-Frage senden",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram Bot (Jonas)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $('HubSpot Token laden (Lead)').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $('Mail bereinigen').item.json.sender }] }], limit: 1 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9328,
+        -336
+      ],
+      "id": "126dab43-a41c-41cb-83ea-1e83bbcbd9f2",
+      "name": "HubSpot Kontakt suchen (Lead)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "01b51ee0-cba5-40df-b2c6-f3469bf15306",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9104,
+        -256
+      ],
+      "id": "a81a35a9-946e-41c1-b8fe-93c635d23679",
+      "name": "HubSpot Kontakt existiert bereits? (Lead)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const contactId = $json.id || ($json.results && $json.results[0] && $json.results[0].id) || null;\nreturn [{ json: { contactId } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8656,
+        -336
+      ],
+      "id": "d442dc67-2562-4dbb-b395-a005ec555d1f",
+      "name": "HubSpot Kontakt-ID normalisieren (Lead)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9480bdd7-8823-438b-91dd-26cb0ec0b0bc",
+              "leftValue": "={{ $json.autoSendOk }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8d5e89d9-dc40-4114-95be-435798db8100",
+      "name": "Auto-Send erlaubt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9776,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Valid Graph Token').first().json.accessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  message: {\n    subject: \"Re: \" + $json.subject,\n    body: { contentType: \"Text\", content: $json.draft },\n    toRecipients: [{ emailAddress: { address: $json.sender } }]\n  },\n  saveToSentItems: true\n}) }}",
+        "options": {}
+      },
+      "id": "e3e35211-f50c-410d-9536-8307d2c20680",
+      "name": "Outlook Email automatisch senden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -9552,
+        -64
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO jonas_email_lead_asked (tenant_id, sender)\n  SELECT t.tid, t.snd\n  FROM (SELECT '{{ $('Claude Output parsen').item.json.tenant_id.replace(/'/g, \"''\") }}'::text AS tid,\n               lower('{{ $('Claude Output parsen').item.json.sender.replace(/'/g, \"''\") }}')::text AS snd) t\n  WHERE t.snd <> ''\n    AND NOT EXISTS (\n      SELECT 1 FROM jonas_leads l\n      WHERE l.tenant_id = t.tid\n        AND position(t.snd in lower(COALESCE(l.contact_info, ''))) > 0\n    )\n  ON CONFLICT (tenant_id, sender) DO NOTHING\n  RETURNING 1\n)\nSELECT EXISTS (SELECT 1 FROM ins) AS should_ask;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -9776,
+        -624
+      ],
+      "id": "482e17ae-705a-4f02-853c-87462a946fd7",
+      "name": "Email-Lead Frage-Gate",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c68f25b9-519e-4abc-beee-18fae9d513fe",
+              "leftValue": "={{ $json.should_ask }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9552,
+        -624
+      ],
+      "id": "821b88fc-f193-49ee-9774-ddfed21b58a6",
+      "name": "Email-Lead neu fragen?"
+    }
+  ],
+  "connections": {
+    "Minütlicher Poll": {
+      "main": [
+        [
+          {
+            "node": "Lock prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mail bereinigen": {
+      "main": [
+        [
+          {
+            "node": "Profil laden (EmailTriage)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Output parsen": {
+      "main": [
+        [
+          {
+            "node": "LEAD Check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Antwort nötig?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lead-Match pruefen (EmailTriage)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LEAD Check": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token laden (Lead)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email-Lead Frage-Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort nötig?": {
+      "main": [
+        [
+          {
+            "node": "Auto-Send erlaubt?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Push noetig?2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push noetig?": {
+      "main": [
+        [
+          {
+            "node": "Telegram an Jonas (Entwurf bereit)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mail als gelesen markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push noetig?2": {
+      "main": [
+        [
+          {
+            "node": "Telegram an Jonas (keine Antwort)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mail als gelesen markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram an Jonas (Entwurf bereit)": {
+      "main": [
+        [
+          {
+            "node": "Mail als gelesen markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram an Jonas (keine Antwort)": {
+      "main": [
+        [
+          {
+            "node": "Mail als gelesen markieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Call": {
+      "main": [
+        [
+          {
+            "node": "Claude Output parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Tenant-Kontext anhängen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Valid Graph Token": {
+      "main": [
+        [
+          {
+            "node": "Ungelesene Mails holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ungelesene Mails holen": {
+      "main": [
+        [
+          {
+            "node": "Mails extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Entwurf erstellen": {
+      "main": [
+        [
+          {
+            "node": "Push noetig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Tenants laden": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Lock freigeben",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Valid Graph Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mail als gelesen markieren": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock prüfen": {
+      "main": [
+        [
+          {
+            "node": "Läuft schon?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Läuft schon?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Lock setzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant-Kontext anhängen": {
+      "main": [
+        [
+          {
+            "node": "Mail bereinigen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock setzen": {
+      "main": [
+        [
+          {
+            "node": "Aktive Tenants laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profil laden (EmailTriage)": {
+      "main": [
+        [
+          {
+            "node": "LLM Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token laden (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Token OK? (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Token OK? (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt suchen (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt anlegen (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt-ID normalisieren (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead-Match pruefen (EmailTriage)": {
+      "main": [
+        [
+          {
+            "node": "Lead-Match gefunden? (EmailTriage)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead-Match gefunden? (EmailTriage)": {
+      "main": [
+        [
+          {
+            "node": "Follow-up neu berechnen (EmailTriage)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email-Lead Pending setzen": {
+      "main": [
+        [
+          {
+            "node": "Telegram Email-Lead-Frage senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt suchen (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt existiert bereits? (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Kontakt anlegen (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt existiert bereits? (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Kontakt-ID normalisieren (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Kontakt anlegen (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot Kontakt-ID normalisieren (Lead)": {
+      "main": [
+        [
+          {
+            "node": "HubSpot Deal anlegen (Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Send erlaubt?": {
+      "main": [
+        [
+          {
+            "node": "Outlook Email automatisch senden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outlook Entwurf erstellen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Email automatisch senden": {
+      "main": [
+        [
+          {
+            "node": "Push noetig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email-Lead Frage-Gate": {
+      "main": [
+        [
+          {
+            "node": "Email-Lead neu fragen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email-Lead neu fragen?": {
+      "main": [
+        [
+          {
+            "node": "Email-Lead Pending setzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "huzRkLX85bTYRtkE",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
